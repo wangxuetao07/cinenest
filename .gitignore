@@ -1,0 +1,9 @@
+node_modules/
+data/
+dist/
+.env
+*.log
+.DS_Store
+.tmp-media
+.tmp-shots
+.workbuddy

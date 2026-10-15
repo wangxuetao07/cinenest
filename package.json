@@ -1,0 +1,26 @@
+{
+  "name": "cinenest",
+  "version": "1.0.0",
+  "description": "影巢 CineNest - 把你的硬盘变成私人影院",
+  "private": true,
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "build": "npm --prefix web run build",
+    "migrate": "node server/db/migrate.js",
+    "web:dev": "npm --prefix web run dev"
+  },
+  "engines": {
+    "node": ">=20.10.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "chokidar": "^3.6.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "fast-glob": "^3.3.3",
+    "node-cron": "^3.0.3",
+    "p-limit": "^5.0.0"
+  }
+}

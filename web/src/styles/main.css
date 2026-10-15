@@ -1,0 +1,184 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    /* 手机上避免任何元素把页面撑出横向滚动条 */
+    overflow-x: hidden;
+  }
+
+  body {
+    background-color: #0f1115;
+    color: #e6e8ee;
+    font-family: 'Microsoft YaHei', 'PingFang SC', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    /* 触屏点击不出现灰色高亮块 */
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+@layer components {
+  .cn-card {
+    @apply bg-card rounded-lg overflow-hidden transition-colors;
+  }
+  .cn-card:hover {
+    @apply bg-cardhover;
+  }
+  .cn-scroll::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .cn-scroll::-webkit-scrollbar-thumb {
+    background: #2a2f3a;
+    border-radius: 4px;
+  }
+  .cn-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .cn-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .cn-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+/* 横向滚动容器 */
+.cn-row {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  /* 手机上滑动到边缘时不要带动整页 */
+  overscroll-behavior-x: contain;
+}
+.cn-row > * {
+  flex: 0 0 auto;
+}
+
+/* 播放器外壳（Player.vue 容器）圆角：桌面 10px，手机与全屏下为直角 */
+.cn-player-shell {
+  border-radius: 10px;
+}
+/* Artplayer 容器圆角 */
+.art-video-player {
+  border-radius: 10px;
+}
+/* 原生全屏 / 网页全屏时去掉圆角，避免视频四角被切出弧形 */
+.art-video-player.art-fullscreen,
+.art-video-player.art-fullscreen-web {
+  border-radius: 0;
+}
+/* 进度条：禁掉浏览器手势，横向拖动交给播放器处理。
+   否则手机上的拖动可能被识别为页面滚动而中断触摸序列（touchcancel），
+   抽帧预览会闪一下就消失 */
+.art-video-player .art-bottom .art-progress {
+  touch-action: none;
+}
+
+/* 详情页顶部模糊背景：高度与渐变随屏幕收缩 */
+.cn-detail-bg {
+  height: 200px;
+}
+.cn-detail-fade {
+  background: linear-gradient(180deg, rgba(15, 17, 21, 0.4), #0f1115 200px);
+}
+@media (min-width: 768px) {
+  .cn-detail-bg {
+    height: 420px;
+  }
+  .cn-detail-fade {
+    background: linear-gradient(180deg, rgba(15, 17, 21, 0.4), #0f1115 420px);
+  }
+}
+
+/* 移动端侧边栏抽屉 */
+.cn-drawer-mask-enter-active,
+.cn-drawer-mask-leave-active {
+  transition: opacity 0.2s ease;
+}
+.cn-drawer-mask-enter-from,
+.cn-drawer-mask-leave-to {
+  opacity: 0;
+}
+
+/* 应用外壳高度：优先用动态视口高度（移动端浏览器地址栏收起/展开不跳动） */
+.cn-app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+.cn-min-shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* ---------------- 移动端（< 768px） ---------------- */
+@media (max-width: 767px) {
+  /* iOS 在输入框字号小于 16px 时会自动放大页面，统一提到 16px */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  /* 触屏没有 hover：卡片封面不做放大动效 */
+  .cn-card .group-hover\:scale-105 {
+    transform: none !important;
+  }
+
+  /* 播放器：手机上贴边直角，字幕放大一点，控制按钮扩大触摸区域 */
+  .cn-player-shell,
+  .art-video-player {
+    border-radius: 0;
+  }
+  .art-video-player {
+    --art-subtitle-font-size: 16px;
+    --art-subtitle-bottom: 10px;
+    --art-control-height: 40px;
+  }
+  /* 手机上无意义/冗余的按钮：
+     - 音量：由系统音量键控制（iOS 禁止脚本调音量，拖了也没用）
+     - 网页全屏：与原生全屏重复，且手机上体验差 */
+  .art-video-player .art-controls .art-control-volume,
+  .art-video-player .art-controls .art-control-fullscreenWeb {
+    display: none !important;
+  }
+  .art-video-player .art-control {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .art-video-player .art-control span {
+    font-size: 13px;
+  }
+  .art-video-player .art-bottom {
+    padding-bottom: 6px;
+  }
+
+  /* 弹窗 / 抽屉在手机上留出安全区（刘海屏） */
+  .n-modal {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
