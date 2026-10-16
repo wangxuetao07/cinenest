@@ -9,8 +9,20 @@
 - 技术栈：Node.js + Express + better-sqlite3 / Vue 3 + Vite + Tailwind CSS + Naive UI + Artplayer
 
 ---
+# 系统截图
+<img width="1912" height="904" alt="image" src="https://github.com/user-attachments/assets/22d820be-c415-4cc9-b391-7800ca0c3e77" />
+<img width="1916" height="903" alt="image" src="https://github.com/user-attachments/assets/2ec7d7d2-76e6-4d7f-b49e-add99ee7d8ef" />
+<img width="1918" height="906" alt="image" src="https://github.com/user-attachments/assets/cccaa73a-4fbb-42f8-a604-321d3a017058" />
+<img width="1919" height="904" alt="image" src="https://github.com/user-attachments/assets/4919408b-0a6b-436b-9f83-f466c712e428" />
+<img width="1916" height="903" alt="image" src="https://github.com/user-attachments/assets/ae2f0be9-5f6a-4a66-a5df-a3fc98874a47" />
+<img width="1919" height="905" alt="image" src="https://github.com/user-attachments/assets/3b1e064f-674e-4442-a325-fb15344d801b" />
 
-## 零、一键部署包（推荐，最快上手）
+
+
+
+
+
+## 一键部署包（推荐，最快上手）
 
 不想碰命令行？直接使用**一键部署包**：解压 → 双击 → 自动打开浏览器，全程无需 `npm install`、无需手动配置 FFmpeg。
 
