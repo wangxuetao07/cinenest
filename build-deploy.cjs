@@ -25,7 +25,6 @@
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
-const crypto = require('crypto');
 
 const ROOT = __dirname;
 const STAGE_ROOT = path.join(ROOT, '.tmp-media', 'deploy');
@@ -64,50 +63,15 @@ const VERSION = detectVersion();
  */
 const REQUIRED_ABIS = [115, 127, 131, 137, 141];
 
-/** 打包机自身 Node 的 ABI 也应落在 vendor 中，保证包内 node_modules 与 vendor 一致 */
-/** 2. 保证 node_modules 里的原生模块与打包机 ABI 一致 */
-function syncLocalNative() {
-  const abi = process.versions.modules;
-  const src = path.join(ROOT, 'vendor', 'sqlite3', 'node-v' + abi + '-win32-x64', 'better_sqlite3.node');
-  const dst = path.join(ROOT, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node');
-  if (!fs.existsSync(src)) {
-    console.log('  [!] 打包机 Node ABI ' + abi + ' 不在 vendor 中，node_modules 沿用现有二进制');
-    return;
-  }
-  fs.mkdirSync(path.dirname(dst), { recursive: true });
-
-  if (sameFile(src, dst)) {
-    console.log('  原生模块已是 ABI ' + abi + '，无需同步');
-    return;
-  }
-
-  try {
-    fs.copyFileSync(src, dst);
-    console.log('  已同步 ABI ' + abi + ' 原生模块到 node_modules');
-  } catch (err) {
-    // Windows 上本机正跑着 CineNest 服务时，该原生模块已被加载并锁定，无法覆盖。
-    // 这不影响打包结果（包内启动器会按 process.versions.modules 自动适配 ABI），故降级为提示。
-    const locked = err.code === 'EBUSY' || err.code === 'EPERM' || err.code === 'EACCES';
-    if (!locked) throw err;
-    console.log('  [!] node_modules 内的原生模块被占用，无法覆盖（本机正在运行 CineNest 服务？）');
-    console.log('      包内启动器会自动适配 ABI，不影响使用；如需彻底同步，请先停止本地服务再打包。');
-  }
-}
-
-/** 两个文件内容是否一致（先比体积，再比 sha1） */
-function sameFile(a, b) {
-  try {
-    if (fs.statSync(a).size !== fs.statSync(b).size) return false;
-  } catch (_) {
-    return false;
-  }
-  const digest = (p) => crypto.createHash('sha1').update(fs.readFileSync(p)).digest('hex');
-  try {
-    return digest(a) === digest(b);
-  } catch (_) {
-    return false;
-  }
-}
+/*
+ * 这里**不要**再往本地 node_modules 同步打包机的 ABI。
+ * 曾经有过一个 syncLocalNative()，把打包机 ABI 的原生模块写进共享的
+ * node_modules —— 结果是用另一个 Node 大版本跑 `npm run dev` 时必然崩
+ * （ERR_DLOPEN_FAILED: NODE_MODULE_VERSION 127 ... requires 137）。
+ * 适配这件事现在由两个运行时环节负责，打包阶段只读不写：
+ *   1. 包内 launcher.cjs：启动服务前按 process.versions.modules 落位；
+ *   2. 包内 server/utils/nativeAbi.js：加载 better-sqlite3 之前再兜一次。
+ */
 
 /* ------------------------------------------------------------------ *
  * 包内文件：一键启动器
@@ -120,6 +84,7 @@ const LAUNCHER_SRC = [
   ' * 职责：环境自检 → 依赖自愈 → FFmpeg 自动补全 → 启动服务 → 打开浏览器',
   ' * 用法：start.cmd            （Windows 双击即可）',
   ' *       node launcher.cjs --port 8090 --no-open --no-download --check',
+  ' *       （端口也接受 --port=8090 / --port:8090 写法）',
   ' */',
   "'use strict';",
   '',
@@ -130,18 +95,95 @@ const LAUNCHER_SRC = [
   'const ROOT = __dirname;',
   'const ARGV = process.argv.slice(2);',
   '',
-  'function hasFlag(name) { return ARGV.indexOf("--" + name) >= 0; }',
+  '/* 参数解析：同时接受 --port 8090 / --port=8090 / --port:8090 三种写法。',
+  '   真实教训：用户习惯把端口写成 --port:8090，旧实现只认 "--port 8090"，',
+  '   于是参数被静默忽略、端口退回 8080 —— 表现就是「改了端口却没生效」。 */',
+  'function hasFlag(name) {',
+  '  const key = "--" + name;',
+  '  return ARGV.some(function (a) { return a === key || a.indexOf(key + "=") === 0 || a.indexOf(key + ":") === 0; });',
+  '}',
   'function optValue(name, fallback) {',
-  '  const i = ARGV.indexOf("--" + name);',
-  '  if (i >= 0 && ARGV[i + 1] && ARGV[i + 1].indexOf("--") !== 0) return ARGV[i + 1];',
+  '  const key = "--" + name;',
+  '  for (let i = 0; i < ARGV.length; i += 1) {',
+  '    const a = ARGV[i];',
+  '    if (a === key) {',
+  '      const next = ARGV[i + 1];',
+  '      if (next && next.indexOf("--") !== 0) return next;',
+  '      continue;',
+  '    }',
+  '    if (a.indexOf(key + "=") === 0 || a.indexOf(key + ":") === 0) {',
+  '      const v = a.slice(key.length + 1);',
+  '      if (v) return v;',
+  '    }',
+  '  }',
   '  return fallback;',
+  '}',
+  '',
+  '/* 无法识别的 --xxx 参数不再静默吞掉，直接提示（拼错参数最容易造成「配置不生效」的误判） */',
+  'function warnUnknownArgs() {',
+  '  const known = ["check", "no-open", "no-download", "port"];',
+  '  for (let i = 0; i < ARGV.length; i += 1) {',
+  '    const a = ARGV[i];',
+  '    if (a.indexOf("--") !== 0) continue;',
+  '    const body = a.slice(2);',
+  '    const name = body.split(/[=:]/)[0];',
+  '    if (known.indexOf(name) >= 0) {',
+  '      if (body === name) i += 1;',
+  '      continue;',
+  '    }',
+  '    warn("忽略无法识别的参数 " + a + "（可用：--port 8090 / --no-open / --no-download / --check）");',
+  '  }',
   '}',
   '',
   'const CHECK_ONLY = hasFlag("check");',
   'const NO_OPEN = hasFlag("no-open");',
   'const NO_DOWNLOAD = hasFlag("no-download");',
-  'const PORT = String(optValue("port", process.env.PORT || "8080"));',
   'const IS_WIN = process.platform === "win32";',
+  '',
+  '/* ---------------- .env（自包含解析） ---------------- */',
+  '/* 启动器可能早于 npm install 运行（包内无依赖时），所以不能依赖 dotenv，',
+  '   这里自己读一份；只用于决定端口并打印横幅，不污染 process.env。 */',
+  'function readEnvFile() {',
+  '  const out = {};',
+  '  try {',
+  '    const file = path.join(ROOT, ".env");',
+  '    if (!fs.existsSync(file)) return out;',
+  '    const text = fs.readFileSync(file, "utf8").replace(/^\\uFEFF/, "");',
+  '    for (const raw of text.split(/\\r?\\n/)) {',
+  '      const line = raw.trim();',
+  '      if (!line || line.charAt(0) === "#") continue;',
+  '      const eq = line.indexOf("=");',
+  '      if (eq <= 0) continue;',
+  '      const key = line.slice(0, eq).trim();',
+  '      let val = line.slice(eq + 1).trim();',
+  '      const q = val.charAt(0);',
+  '      if (val.length > 1 && (q === \'"\' || q === "\'") && val.charAt(val.length - 1) === q) val = val.slice(1, -1);',
+  '      out[key] = val;',
+  '    }',
+  '  } catch (_) { /* 读不了就当没有 .env */ }',
+  '  return out;',
+  '}',
+  '',
+  'const DOTENV = readEnvFile();',
+  '',
+  'function normalizePort(v) {',
+  '  const n = Number(String(v).trim());',
+  '  return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;',
+  '}',
+  '',
+  '/* 端口优先级：--port 参数 > 系统环境变量 PORT > .env 的 PORT > 默认 8080',
+  '   注意：子进程的 PORT 由本启动器显式注入，而 dotenv 默认不覆盖已存在的环境变量，',
+  '   所以这里必须先把 .env 读出来，否则 .env 里的端口会被下面的注入值盖掉。 */',
+  'const PORT_INFO = (function () {',
+  '  const cli = optValue("port", null);',
+  '  if (cli !== null && cli !== "") return { raw: cli, from: "--port 参数" };',
+  '  if (process.env.PORT) return { raw: process.env.PORT, from: "环境变量 PORT" };',
+  '  if (DOTENV.PORT) return { raw: DOTENV.PORT, from: ".env 文件" };',
+  '  return { raw: null, from: "默认值" };',
+  '})();',
+  'const PORT_NUM = PORT_INFO.raw === null ? 8080 : normalizePort(PORT_INFO.raw);',
+  'const PORT_INVALID = PORT_NUM === null;',
+  'const PORT = String(PORT_INVALID ? 8080 : PORT_NUM);',
   '',
   'const LINE = "============================================================";',
   '',
@@ -158,7 +200,9 @@ const LAUNCHER_SRC = [
   '  log(LINE);',
   '  log("   安装目录 : " + ROOT);',
   '  log("   Node.js  : " + process.version + " (" + process.platform + "-" + process.arch + ", ABI " + process.versions.modules + ")");',
-  '  log("   服务端口 : " + PORT);',
+  '  log("   服务端口 : " + PORT + "（来自 " + PORT_INFO.from + "）");',
+  '  if (PORT_INVALID) warn("端口配置 " + PORT_INFO.raw + " 不是 1~65535 的整数，已回退 8080");',
+  '  warnUnknownArgs();',
   '  log("");',
   '}',
   '',
@@ -448,8 +492,9 @@ const LAUNCHER_SRC = [
   '',
   'function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }',
   '',
-  'async function waitHealth(url, tries) {',
+  'async function waitHealth(url, tries, child) {',
   '  for (let i = 0; i < tries; i += 1) {',
+  '    if (child && child.exitCode !== null) return false;   // 子进程已退出，不必再干等满 30 秒',
   '    try {',
   '      const res = await fetch(url, { signal: AbortSignal.timeout(3000) });',
   '      if (res.ok) return true;',
@@ -460,6 +505,7 @@ const LAUNCHER_SRC = [
   '}',
   '',
   'async function startServer() {',
+  '  // 显式注入端口：确保子进程、横幅、健康检查用的是同一个值（.env 已在上方读入 PORT）',
   '  const env = Object.assign({}, process.env, { PORT: PORT });',
   '  log("  [..]   正在启动 CineNest 服务 ...");',
   '  const child = cp.spawn(process.execPath, ["server/index.js"], {',
@@ -467,7 +513,7 @@ const LAUNCHER_SRC = [
   '  });',
   '',
   '  const url = "http://localhost:" + PORT;',
-  '  const alive = await waitHealth("http://127.0.0.1:" + PORT + "/api/health", 60);',
+  '  const alive = await waitHealth("http://127.0.0.1:" + PORT + "/api/health", 60, child);',
   '',
   '  if (alive) {',
   '    log("");',
@@ -480,7 +526,8 @@ const LAUNCHER_SRC = [
   '    if (!NO_OPEN) openBrowser(url);',
   '  } else {',
   '    warn("服务未在预期时间内就绪，请查看上方日志。");',
-  '    warn("若提示端口被占用，可换端口重试：start.cmd --port 8090");',
+  '    if (child.exitCode !== null) warn("服务进程已退出（退出码 " + child.exitCode + "），多半是端口被占用：日志里的 EADDRINUSE 会写明冲突端口。");',
+  '    warn("换端口：改 .env 里的 PORT（持久），或本次用 start.cmd --port 8090（也可写成 --port=8090）。");',
   '  }',
   '',
   '  child.on("exit", (code) => { process.exit(code == null ? 0 : code); });',
@@ -596,7 +643,7 @@ const DEPLOY_DOC_SRC = [
   '',
   '- 启动：双击 `start.cmd`；',
   '- 停止：关闭服务窗口，或在该窗口按 `Ctrl + C`；',
-  '- 换端口：`start.cmd --port 8090`；',
+  '- 换端口：改 `.env` 里的 `PORT=8090`（持久，重启生效），或 `start.cmd --port 8090`（仅本次）；',
   '- 不自动开浏览器：`start.cmd --no-open`；',
   '- 只做环境自检：`start.cmd --check`；',
   '- 局域网访问：手机/平板连同一 Wi-Fi，访问 `http://电脑IP:8080`（Windows 防火墙需放行）。',
@@ -613,6 +660,7 @@ const DEPLOY_DOC_SRC = [
   '| `node_modules/` | 运行依赖（已内置，无需 `npm install`） |',
   '| `bin/ffmpeg/` | FFmpeg（离线包内置；标准包首次启动自动下载） |',
   '| `vendor/` | 各 Node 大版本对应的原生模块，启动器会按当前 Node 自动选用（请勿删除） |',
+  '| `.env` | 可选配置：`PORT`（端口）/ `HOST`（监听地址），参考同目录 `.env.example` |',
   '| `data/` | **运行时自动生成**：数据库、缩略图、预览片段等。备份就备份这里 |',
   '| `.cache/` | 启动器临时下载目录，用完自动清理 |',
   '',
@@ -624,8 +672,10 @@ const DEPLOY_DOC_SRC = [
   '**2. 启动报错「缺少 ffmpeg.exe / ffprobe.exe」**',
   '把两个 exe 放到 `bin\\ffmpeg\\` 下，或联网重跑启动器让它自动下载（加 `--no-download` 可禁用）。',
   '',
-  '**3. 端口被占用（EADDRINUSE）**',
-  '换端口启动：`start.cmd --port 8090`，之后用 `http://localhost:8090` 访问。',
+  '**3. 端口被占用（EADDRINUSE）／改了 `.env` 的 PORT 却不生效**',
+  '端口按「`--port` 参数 > 系统环境变量 PORT > `.env` > 默认 8080」取值，启动横幅会标注来源，例如 `服务端口 : 8090（来自 .env 文件）`。',
+  '换端口：把 `.env` 里的 `PORT` 改掉（持久，重启生效），或本次临时指定 `start.cmd --port 8090`，之后用 `http://localhost:8090` 访问。',
+  '若横幅显示「来自 环境变量 PORT」，说明系统里已经设过 `PORT`，它优先于 `.env`，请清掉该环境变量或直接用 `--port`。',
   '',
   '**4. 中文文件名/路径乱码或扫描不到**',
   '确保视频目录名正常；程序内部已强制 UTF-8。若仍异常，在「任务」页查看扫描日志定位具体文件。',
@@ -657,6 +707,7 @@ const ENV_EXAMPLE_SRC = [
   '# 复制本文件为 .env 后按需修改（不改也能跑，均为可选）',
   '',
   '# 服务端口（默认 8080）',
+  '# 优先级：--port 参数 > 系统环境变量 PORT > 本文件 > 默认 8080',
   'PORT=8080',
   '',
   '# 监听地址：0.0.0.0 = 局域网可访问；127.0.0.1 = 仅本机',
@@ -668,8 +719,16 @@ const ENV_EXAMPLE_SRC = [
  * 打包
  * ------------------------------------------------------------------ */
 
+/**
+ * 递归删除，**返回是否真的删干净**。
+ *
+ * 静默吞掉失败是真实教训：staging 没删掉时 copyInto 会往旧产物上追加，
+ * 压出的包里混着上一版的陈旧 chunk（陈旧 hash 的 js 一起被发布）。
+ * 调用方必须检查返回值，删不掉就中止打包。
+ */
 function rmrf(p) {
   try { fs.rmSync(p, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+  return !fs.existsSync(p);
 }
 
 function copyInto(srcAbs, destAbs) {
@@ -787,6 +846,47 @@ function lintStartCmd(text) {
   return problems;
 }
 
+/**
+ * 打包前校验必需素材是否齐备。
+ * copyInto() 对缺失的源是静默跳过的，若不先查一遍，缺 dist/ 之类会打出
+ * 一个「后端能跑、打开却是空白页」的包，且打包过程看不出任何异常。
+ */
+function checkSources() {
+  const missing = [];
+  const need = [
+    ['server/index.js', '后端入口'],
+    ['server/config.js', '后端配置'],
+    ['package.json', '依赖清单'],
+    ['package-lock.json', '依赖锁定文件'],
+    ['node_modules/better-sqlite3/package.json', '运行依赖 better-sqlite3'],
+    ['node_modules/better-sqlite3/build/Release/better_sqlite3.node', 'better-sqlite3 原生模块'],
+    ['dist/index.html', '前端构建产物'],
+  ];
+  for (const [rel, desc] of need) {
+    if (!fs.existsSync(path.join(ROOT, rel))) missing.push(rel + '（' + desc + '）');
+  }
+
+  if (missing.length) {
+    throw new Error(
+      '缺少打包必需的文件：' + missing.map((s) => '\n    - ' + s).join('')
+      + (missing.some((s) => s.startsWith('dist/'))
+        ? '\n  → 前端未构建，请先在项目根目录执行 npm run build（或 npm.cmd run build）'
+        : '')
+      + (missing.some((s) => s.startsWith('node_modules/'))
+        ? '\n  → 运行依赖不完整，请先执行 npm install'
+        : '')
+    );
+  }
+
+  // 前端产物至少要有 JS/CSS，避免只有一个空壳 index.html
+  const assets = path.join(ROOT, 'dist', 'assets');
+  const n = fs.existsSync(assets) ? fs.readdirSync(assets).length : 0;
+  if (n === 0) {
+    throw new Error('dist/assets 为空，前端构建产物不完整，请重新执行 npm run build');
+  }
+  console.log('  素材校验通过（前端产物 ' + n + ' 个资源文件）');
+}
+
 /** 组装一个部署包目录 */
 function assemble(withFfmpeg) {
   const cmdIssues = lintStartCmd(START_CMD_SRC);
@@ -796,7 +896,13 @@ function assemble(withFfmpeg) {
 
   const stage = path.join(STAGE_ROOT, withFfmpeg ? 'offline' : 'standard');
   const pkg = path.join(stage, PKG_DIR_NAME);
-  rmrf(stage);
+  if (!rmrf(stage)) {
+    throw new Error(
+      '暂存目录清理失败：' + stage +
+      '\n    （里面残留着上一次打包的旧产物，直接压缩会把陈旧文件混进包里）' +
+      '\n    → 请手动删除整个 ' + STAGE_ROOT + ' 目录后重新执行打包'
+    );
+  }
   fs.mkdirSync(pkg, { recursive: true });
 
   // 代码与产物
@@ -896,7 +1002,8 @@ async function ensureFfmpegForPack() {
   console.log('  项目根目录 : ' + ROOT);
   console.log('  生成内容   : ' + (BUILD_STANDARD ? '标准包 ' : '') + (BUILD_OFFLINE ? '离线包' : ''));
   console.log('');
-  syncLocalNative();
+  console.log('  打包机 Node : ' + process.version + '（ABI ' + process.versions.modules + '，包内不改写原生模块）');
+  checkSources();
   console.log('');
 
   const results = [];

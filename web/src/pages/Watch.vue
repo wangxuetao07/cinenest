@@ -6,6 +6,7 @@ import { videosApi, formatDuration, formatSize, type Video } from '@/api';
 import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import Player from '@/components/Player.vue';
+import RenameVideoModal from '@/components/RenameVideoModal.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -16,6 +17,7 @@ const auth = useAuthStore();
 const video = ref<Video | null>(null);
 const siblings = ref<Video[]>([]);
 const loading = ref(true);
+const showRenameModal = ref(false);
 
 /* ---------------- 标签 ---------------- */
 
@@ -71,33 +73,42 @@ const nextVideo = computed(() => {
 const dirOf = (p: string) => p.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
 const stemOf = (name: string) => name.replace(/\.[^.]+$/, '');
 
+/** 刷新右侧「同目录视频」列表（文件名变化后顺序与分组都会变，故独立出来） */
+async function refreshSiblings(v: Video) {
+  const paged = await videosApi.list({ libraryId: v.library_id, size: 200 });
+  const dir = dirOf(v.file_path);
+  const stem = stemOf(v.file_name);
+  const prefix = stem.replace(/[\s._-]*(s\d{1,2}e\d{1,3}|ep?\s?\d{1,3}|\d{1,3})$/i, '').trim();
+
+  const sameDir = paged.items.filter((it) => dirOf(it.file_path) === dir);
+  const related = prefix
+    ? sameDir.filter((it) => stemOf(it.file_name).startsWith(prefix) || it.id === v.id)
+    : sameDir;
+
+  const list = (related.length > 1 ? related : sameDir).slice();
+  // 按文件名自然排序
+  list.sort((a, b) => a.file_name.localeCompare(b.file_name, 'zh-CN', { numeric: true }));
+  siblings.value = list;
+}
+
 async function load() {
   loading.value = true;
   editingTags.value = false;
   try {
     const v = await videosApi.detail(videoId.value);
     video.value = v;
-
-    // 当前目录同类视频
-    const paged = await videosApi.list({ libraryId: v.library_id, size: 200 });
-    const dir = dirOf(v.file_path);
-    const stem = stemOf(v.file_name);
-    const prefix = stem.replace(/[\s._-]*(s\d{1,2}e\d{1,3}|ep?\s?\d{1,3}|\d{1,3})$/i, '').trim();
-
-    const sameDir = paged.items.filter((it) => dirOf(it.file_path) === dir);
-    const related = prefix
-      ? sameDir.filter((it) => stemOf(it.file_name).startsWith(prefix) || it.id === v.id)
-      : sameDir;
-
-    const list = (related.length > 1 ? related : sameDir).slice();
-    // 按文件名自然排序
-    list.sort((a, b) => a.file_name.localeCompare(b.file_name, 'zh-CN', { numeric: true }));
-    siblings.value = list;
+    await refreshSiblings(v);
   } catch (err: any) {
     message.error(err?.message || '加载失败');
   } finally {
     loading.value = false;
   }
+}
+
+/** 重命名完成后就地更新：不置 loading，避免播放器被卸载导致中断播放 */
+function onRenamed(v: Video) {
+  video.value = v;
+  refreshSiblings(v).catch(() => { /* 列表刷新失败不影响播放 */ });
 }
 
 function goNext() {
@@ -153,6 +164,7 @@ onMounted(load);
           <div class="flex flex-wrap items-center gap-2 mb-4">
             <n-button size="small" @click="router.push(`/video/${video.id}`)">详情</n-button>
             <n-button size="small" :disabled="!nextVideo" @click="goNext">播放下一个</n-button>
+            <n-button v-if="auth.isAdmin" size="small" @click="showRenameModal = true">重命名</n-button>
             <n-button
               v-if="video.favorite"
               size="small"
@@ -255,5 +267,8 @@ onMounted(load);
         <div v-else class="text-[13px] text-muted py-10 text-center">目录下暂无其他视频</div>
       </aside>
     </div>
+
+    <!-- 重命名（仅管理员）：改显示名并同步改磁盘文件名，原地更新不影响正在播放的画面 -->
+    <RenameVideoModal v-model:show="showRenameModal" :video="video" @updated="onRenamed" />
   </div>
 </template>

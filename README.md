@@ -18,8 +18,8 @@
 
 | 包名 | 体积 | 适用场景 |
 |---|---|---|
-| `CineNest-Deploy-v1.4.6-win-x64.zip` | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
-| `CineNest-Deploy-v1.4.6-offline-win-x64.zip` | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
+| `CineNest-Deploy-v1.4.9-win-x64.zip` | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
+| `CineNest-Deploy-v1.4.9-offline-win-x64.zip` | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
 
 两个包都自带已构建好的前端 `dist/`、运行依赖 `node_modules/`，以及适配 Node 20/22/23/24/25 的多版本原生组件 `vendor/`，只需目标机器装好 Node.js。
 
@@ -42,7 +42,7 @@
 ============================================================
    安装目录 : D:\CineNest
    Node.js  : v24.15.0 (win32-x64, ABI 137)
-   服务端口 : 8080
+   服务端口 : 8080（来自 默认值）
 
   [OK]   Node.js 版本 v24.15.0 符合要求
   [OK]   已自动适配当前 Node.js（node-v137-win32-x64）
@@ -63,13 +63,28 @@
 |---|---|
 | 启动 | 双击 `start.cmd` |
 | 停止 | 关闭服务窗口，或在窗口内按 `Ctrl + C` |
-| 换端口 | `start.cmd --port 8090` |
+| 换端口 | 改根目录 `.env` 里的 `PORT=8090`（持久），或 `start.cmd --port 8090`（仅本次） |
 | 不自动开浏览器 | `start.cmd --no-open` |
 | 只做环境自检（不启动） | `start.cmd --check` |
 | 禁止自动下载 FFmpeg | `start.cmd --no-download` |
 | 局域网访问 | 手机连同一 Wi-Fi，访问 `http://电脑IP:8080`（需放行防火墙） |
 
 > 包内 `DEPLOY-README.md` 提供了同内容的离线速查版，可随包分发。包内所有文件名均为英文（`start.cmd`、`launcher.cjs`、`DEPLOY-README.md`），这是为了避免中文文件名在不同解压工具与系统代码页下出现乱码或被跳过；程序与媒体库**依然完整支持中文路径与中文文件名**。
+
+#### 端口与监听地址的取值优先级
+
+从高到低，先命中者生效：
+
+| 优先级 | 来源 | 示例 |
+|---|---|---|
+| 1 | 命令行参数 | `start.cmd --port 8090` |
+| 2 | 系统环境变量 `PORT` | `set PORT=8090` 后启动 |
+| 3 | 根目录 `.env` 文件 | `PORT=8090` |
+| 4 | 内置默认值 | `8080` |
+
+启动横幅会直接标注本次端口来源，例如 `服务端口 : 8090（来自 .env 文件）`，可据此确认配置是否被读到。`HOST` 同理，但只从 `.env` / 环境变量读取（默认 `0.0.0.0`）。开发模式（`npm run dev` / `npm start`）不经过启动器，同样按上表 2→4 的顺序取值。
+
+根目录的 `.env` 需要你自己建：把同目录的 `.env.example` 复制一份、重命名为 `.env` 再改（`.env` 属本机私有配置，不入版本库）。
 
 ### 4. 针对不同环境的自动处理
 
@@ -89,6 +104,9 @@
 | npm | ≥ 10 |
 | 操作系统 | Windows 10 / 11 |
 | FFmpeg | 必须，见下方「安装 FFmpeg」（**一键部署包可自动处理**） |
+
+> Node.js 大版本可以随意切换：项目内置 Node 20 / 22 / 23 / 24 / 25 对应的 better-sqlite3 原生组件
+> （`vendor/sqlite3/`），启动时按当前 ABI 自动适配，**不需要 `npm rebuild`，也不需要 C++ 编译环境**。
 
 ---
 
@@ -157,6 +175,13 @@ npm run web:dev
 ```
 
 浏览器访问 <http://localhost:5173>
+
+> **改了 Node.js 大版本后启动报 `NODE_MODULE_VERSION`？不用重装依赖。**
+> `better-sqlite3` 是原生模块，每个 Node 大版本的 ABI 不同，但项目已内置 Node 20 / 22 / 23 / 24 / 25
+> 五套预编译组件（`vendor/sqlite3/`）。服务启动时会按当前 Node 的实际 ABI **自动切换**，
+> 免联网、免编译、无需 `npm rebuild`——在 Node 22 与 24 之间来回切换都能直接跑。
+> 实现见 `server/utils/nativeAbi.js`，切换时会打印
+> `[native] better-sqlite3 原生模块已切换为当前 Node.js 对应的 node-v137-win32-x64`。
 
 ### 方式 B：生产模式（只启动后端）
 
@@ -253,6 +278,18 @@ CineNest 在手机 / 平板浏览器上开箱即用，桌面端布局不受影�
 
 ---
 
+## 五点十三、视频重命名：显示名与磁盘文件同步改（v1.4.8 新增，仅管理员）
+
+**详情页标题旁、播放页操作栏新增「重命名」按钮**，改的不只是显示名——**磁盘上的文件会一并改名**：
+
+- **改动三同步**：数据库记录（路径 / 文件名 / 显示名）、磁盘文件、同目录**同名字幕**（`影片.srt`、`影片.zh-CN.srt` / `影片.chs.ass` 这类带语言标记的也会保留标记跟着改）一次完成；缩略图缓存直接迁移键位，**不会重新抽帧**。
+- **视频 ID 不变**：收藏、观看进度、观看历史、播放列表、标签全部保留，正在播放时改名也不会中断画面。
+- **名字规则**：不能含 `\ / : * ? " < > |`、不能以点或空格结尾、不用系统保留名（CON 等）、最长 120 字符；**扩展名固定不可改**（输入里带上相同扩展名会自动剥离）；与已有文件重名会被拒绝。
+- **弹窗里可取消勾选「同时重命名磁盘上的文件」**：只想改站内显示名、不动硬盘文件时用这个。
+- **占用保护**：文件正被播放器 / 预览生成占用时会自动稍候重试，仍失败会提示「文件被占用」稍后再试；改名后不会触发多余的全库扫描。
+
+---
+
 ## 五点四、m3u8 / HLS 播放（v1.2 新增）
 
 CineNest 对 m3u8 有两条路径，**自动选择，无需配置**：
@@ -342,7 +379,7 @@ pm2 delete cinenest   # 移除
 cinenest/
 ├─ package.json
 ├─ build-deploy.cjs      # 一键部署包打包器（npm run deploy:pack）
-├─ .env                  # PORT / HOST
+├─ .env                  # PORT / HOST（见「端口与监听地址的取值优先级」）
 ├─ data/                 # 运行时生成：数据库、缩略图、海报、HLS 转码临时目录、备份、错误日志
 │  ├─ hls/               # 按需转码的分片（自动清理）
 │  └─ backup/            # 升级迁移前的数据库备份
@@ -384,7 +421,12 @@ netstat -ano | findstr :8080
 taskkill /PID <进程PID> /F
 ```
 
-改用其他端口：编辑根目录 `.env`，把 `PORT=8080` 改成如 `PORT=8090`，重启服务。
+改用其他端口（二选一）：
+
+- **持久生效**：编辑根目录 `.env`，把 `PORT=8080` 改成如 `PORT=8090`，重启服务；
+- **仅本次生效**：`start.cmd --port 8090`。
+
+重启后看启动横幅那一行 `服务端口 : xxxx（来自 ...）`，确认值来自哪里。若是开发模式（`npm run dev`），`.env` 会被直接读取，改完重启即可生效。
 
 ### 3. 中文乱码 / 中文文件名扫不到
 
@@ -393,19 +435,57 @@ taskkill /PID <进程PID> /F
 - 中文目录、中文文件名已支持；若仍扫不到，请确认目录路径填写的是**绝对路径**且确实存在。
 - 大量中文文件名建议确认磁盘文件系统为 NTFS（FAT32 对长文件名/特殊字符支持较差）。
 
-### 4. 安装 better-sqlite3 失败
+### 4. PowerShell 里跑 npm 报「禁止运行脚本」
+
+**现象**：
+
+```
+npm : 无法加载文件 D:\Program Files\nodejs\npm.ps1，因为在此系统上禁止运行脚本。
+    + CategoryInfo : SecurityError: (:) [], PSSecurityException
+```
+
+**原因**：PowerShell 默认执行策略为 `Restricted`，禁止运行任何 `.ps1`，而 PowerShell 里的 `npm` 会优先命中 `npm.ps1`。与项目无关。
+
+**处理**（任选其一）：
+
+```powershell
+# ① 最省事：直接用 npm.cmd（.cmd 由 cmd.exe 执行，不受执行策略管辖）
+npm.cmd run dev
+
+# ② 一劳永逸：只放开当前用户，仍会阻止从网上下载的未签名脚本
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+# ③ 换个 shell：在 Git Bash 里直接 npm run dev
+```
+
+### 5. 启动报 NODE_MODULE_VERSION / ERR_DLOPEN_FAILED
+
+**现象**：
+
+```
+Error: The module '...\better_sqlite3.node' was compiled against a different Node.js version
+using NODE_MODULE_VERSION 127. This version of Node.js requires NODE_MODULE_VERSION 137.
+```
+
+**原因**：原生模块的 ABI 与当前 Node 大版本不匹配。**正常情况下项目会自动处理**（`server/utils/nativeAbi.js` 启动时按 `process.versions.modules` 从 `vendor/sqlite3/` 落位对应组件）。若仍报错：
+
+1. 确认 `vendor/sqlite3/node-v<ABI>-win32-x64/better_sqlite3.node` 存在（当前 Node 的 ABI 见上表：20→115、22→127、23→131、24→137、25→141）；
+2. 该文件可能被另一个正在运行的 CineNest 进程占用 → 先关掉所有 CineNest 窗口再启动；
+3. 你的 Node 不在 20/22/23/24/25 之列（如 26+ 或 18）→ 换用 Node 22 LTS，或执行 `npm install`（需联网 + C++ 编译环境）自行编译。
+
+### 6. 安装 better-sqlite3 失败
 
 **现象**：`npm install` 报 node-gyp / MSBuild 相关错误。
-**处理**：安装 **Visual Studio Build Tools**（勾选「使用 C++ 的桌面开发」），或切换到与本机 Node 版本匹配的预编译包后重试。
+**处理**：安装 **Visual Studio Build Tools**（勾选「使用 C++ 的桌面开发」），或切换到与本机 Node 版本匹配的预编译包后重试。多数情况下走上面的自动适配即可，不必自己编译。
 
-### 5. 视频无法播放 / 一直转圈
+### 7. 视频无法播放 / 一直转圈
 
 - 确认容器格式浏览器支持：`.mp4`(H.264/AAC) 兼容性最好。
 - `.mkv`、`.avi`、`wmv`、`flv` 等浏览器无法直出的格式，v1.2 起会**自动切换到实时转码 HLS** 播放：首帧需要几秒，拖拽到未转码的位置需要等服务端补齐分片。
 - 若转码很卡，多半是 CPU 不够（尤其 4K 片源），可降低并发或换 `ultrafast` 预设（见「五点四」）。
 - 检查 `data/error.log` 是否有读取错误。
 
-### 6. 缩略图不显示
+### 8. 缩略图不显示
 
 - 首次扫描时生成，大库会稍慢；未生成的会在首次访问 `/api/thumb/:id` 时按需补生成。
 - 可在「设置 → 系统」点击「清空缩略图缓存」后重新扫描。

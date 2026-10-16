@@ -19,9 +19,19 @@ delete process.env.TZ;
 
 const root = path.resolve(__dirname, '..');
 
+// 端口容错：PORT 写了非法值（非整数 / 越界）时不要变成 NaN 交给 listen，
+// 否则报错晦涩难懂。这里显式回退 8080 并提示。
+const rawPort = process.env.PORT;
+const parsedPort = Number(rawPort);
+const portValid = Number.isInteger(parsedPort) && parsedPort >= 1 && parsedPort <= 65535;
+if (rawPort !== undefined && rawPort !== '' && !portValid) {
+  // 此时 logger 还没加载，直接用 console 输出
+  console.warn('[警告] PORT=' + rawPort + ' 不是 1~65535 的整数，已回退 8080');
+}
+
 const config = {
   root,
-  port: Number(process.env.PORT || 8080),
+  port: portValid ? parsedPort : 8080,
   host: process.env.HOST || '0.0.0.0',
 
   dataDir: path.join(root, 'data'),

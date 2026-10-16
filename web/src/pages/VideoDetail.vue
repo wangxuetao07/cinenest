@@ -11,6 +11,7 @@ import {
   type Playlist,
 } from '@/api';
 import VideoGrid from '@/components/VideoGrid.vue';
+import RenameVideoModal from '@/components/RenameVideoModal.vue';
 import { useAuthStore } from '@/stores/auth';
 
 const route = useRoute();
@@ -24,6 +25,7 @@ const episodes = ref<Video[]>([]);
 const playlists = ref<Playlist[]>([]);
 
 const showPlaylistModal = ref(false);
+const showRenameModal = ref(false);
 const tagInput = ref<string[]>([]);
 const savingTags = ref(false);
 
@@ -42,6 +44,21 @@ const resolution = computed(() => {
 const dirOf = (p: string) => p.replace(/\\/g, '/').split('/').slice(0, -1).join('/');
 const stemOf = (name: string) => name.replace(/\.[^.]+$/, '');
 
+/** 同目录同名剧集（文件改名后需要重算，故独立出来） */
+async function loadEpisodes(v: Video) {
+  const paged = await videosApi.list({ libraryId: v.library_id, size: 200 });
+  const dir = dirOf(v.file_path);
+  const stem = stemOf(v.file_name);
+  const prefix = stem.replace(/[\s._-]*(s\d{1,2}e\d{1,3}|ep?\s?\d{1,3}|\d{1,3})$/i, '').trim();
+
+  episodes.value = paged.items.filter((it) => {
+    if (it.id === v.id) return false;
+    if (dirOf(it.file_path) !== dir) return false;
+    if (!prefix) return false;
+    return stemOf(it.file_name).startsWith(prefix);
+  });
+}
+
 async function load() {
   loading.value = true;
   try {
@@ -49,25 +66,19 @@ async function load() {
     video.value = v;
     tagInput.value = v.tags ? [...v.tags] : [];
 
-    // 同名剧集：同目录 + 前缀相似
-    const paged = await videosApi.list({ libraryId: v.library_id, size: 200 });
-    const dir = dirOf(v.file_path);
-    const stem = stemOf(v.file_name);
-    const prefix = stem.replace(/[\s._-]*(s\d{1,2}e\d{1,3}|ep?\s?\d{1,3}|\d{1,3})$/i, '').trim();
-
-    episodes.value = paged.items.filter((it) => {
-      if (it.id === v.id) return false;
-      if (dirOf(it.file_path) !== dir) return false;
-      if (!prefix) return false;
-      return stemOf(it.file_name).startsWith(prefix);
-    });
-
+    await loadEpisodes(v);
     playlists.value = await playlistsApi.list().catch(() => []);
   } catch (err: any) {
     message.error(err?.message || '加载失败');
   } finally {
     loading.value = false;
   }
+}
+
+/** 重命名完成后：就地更新，避免整页 loading 闪烁 */
+function onRenamed(v: Video) {
+  video.value = v;
+  loadEpisodes(v).catch(() => { /* 剧集列表刷新失败不影响主信息 */ });
 }
 
 async function toggleFavorite() {
@@ -168,7 +179,24 @@ onMounted(load);
 
           <!-- 信息 -->
           <div class="flex-1 min-w-0">
-            <h1 class="text-[19px] md:text-[26px] font-bold leading-tight mb-2">{{ video.title || video.file_name }}</h1>
+            <div class="flex items-start gap-2 md:gap-3 flex-wrap mb-2">
+              <h1 class="text-[19px] md:text-[26px] font-bold leading-tight">
+                {{ video.title || video.file_name }}
+              </h1>
+              <!-- 重命名：仅管理员；改显示名并同步改磁盘文件名 -->
+              <button
+                v-if="auth.isAdmin"
+                class="h-7 px-2.5 rounded-md border border-line text-muted hover:text-white hover:border-white/30 transition-colors text-[12px] flex items-center gap-1 shrink-0 mt-1"
+                title="修改视频名，并同步重命名磁盘上的文件"
+                @click="showRenameModal = true"
+              >
+                <svg viewBox="0 0 24 24" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                重命名
+              </button>
+            </div>
+
             <div class="flex items-center gap-3 text-[12.5px] md:text-[13px] text-muted mb-4 md:mb-6 flex-wrap">
               <span>{{ formatDuration(video.duration) }}</span>
               <span>·</span>
@@ -250,6 +278,9 @@ onMounted(load);
         </section>
       </div>
     </template>
+
+    <!-- 重命名（仅管理员） -->
+    <RenameVideoModal v-model:show="showRenameModal" :video="video" @updated="onRenamed" />
 
     <!-- 加入播放列表 -->
     <n-modal v-model:show="showPlaylistModal">

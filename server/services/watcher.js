@@ -13,12 +13,33 @@ const { toPosix, isVideoExt } = require('../utils/paths');
 
 const DEBOUNCE_MS = 3000;
 
-/** libraryId → { watcher, timer } */
+/** 程序内部改动（重命名等）后，忽略 watcher 事件的窗口 */
+const SUPPRESS_MS = 20000;
+
+/** libraryId → { watcher, timer, suppressUntil } */
 const watchers = new Map();
+
+/**
+ * 声明「接下来这段时间内的文件变动是程序自己造成的」（v1.4.8）。
+ *
+ * 重命名改了磁盘路径但库里的记录已经同步更新，再触发一次扫描纯属浪费；
+ * 更糟的是扫描期间改名会被 409 挡下，管理员连续改几个名字就会撞上。
+ * 调用方只需在完成内部改动后声明一次，本库在窗口内的 watcher 事件全部忽略。
+ */
+function suppress(libraryId, ms = SUPPRESS_MS) {
+  const entry = watchers.get(Number(libraryId));
+  if (!entry) return false;
+  entry.suppressUntil = Date.now() + ms;
+  return true;
+}
 
 function scheduleScan(library) {
   const entry = watchers.get(library.id);
   if (!entry) return;
+  if (entry.suppressUntil && Date.now() < entry.suppressUntil) {
+    logger.info('[watcher] 忽略本次变动（程序内部操作导致）#' + library.id);
+    return;
+  }
   if (entry.timer) clearTimeout(entry.timer);
   entry.timer = setTimeout(async () => {
     entry.timer = null;
@@ -57,7 +78,7 @@ function watchLibrary(library) {
     .on('change', (p) => { if (isVideoExt(p)) scheduleScan(library); })
     .on('error', (err) => logger.error('[watcher] 错误 #' + library.id, err.message));
 
-  watchers.set(library.id, { watcher, timer: null, library });
+  watchers.set(library.id, { watcher, timer: null, suppressUntil: 0, library });
   logger.info('[watcher] 已监听媒体库 #' + library.id + ' ' + library.path);
 }
 
@@ -83,4 +104,4 @@ async function stopAll() {
   for (const id of ids) await unwatchLibrary(id);
 }
 
-module.exports = { startAll, stopAll, watchLibrary, unwatchLibrary, scheduleScan };
+module.exports = { startAll, stopAll, watchLibrary, unwatchLibrary, scheduleScan, suppress };

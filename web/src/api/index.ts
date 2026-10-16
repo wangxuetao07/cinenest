@@ -294,8 +294,25 @@ export const videosApi = {
   list: (query: VideoQuery = {}) =>
     http.get<Paged<Video>>('/videos', { params: clean(query as any) }).then((r) => r.data),
   detail: (id: number) => http.get<Video>(`/videos/${id}`).then((r) => r.data),
+  /** 改显示名 / 收藏 / 标签；title 只改「显示名」，不动磁盘文件名 */
   update: (id: number, payload: { title?: string | null; favorite?: boolean | number; tags?: string[] }) =>
     http.patch<{ ok: true }>(`/videos/${id}`, payload).then((r) => r.data),
+  /**
+   * 重命名（仅管理员）：改显示名，并把磁盘上的文件一并改名。
+   * 同目录同名字幕（含 `影片.zh-CN.srt` 这类）会跟着改，缩略图缓存键同步迁移。
+   * @param payload.name 新名称（不含扩展名，带上相同扩展名也会被自动剥离）
+   * @param payload.syncTitle 是否同时把显示名改成新名称（默认 true）
+   */
+  rename: (id: number, payload: { name: string; syncTitle?: boolean }) =>
+    http
+      .post<{
+        ok: true;
+        changed: boolean;
+        file_renamed: boolean;
+        subtitles: string[];
+        video: Video;
+      }>(`/videos/${id}/rename`, payload)
+      .then((r) => r.data),
   remove: (id: number) => http.delete<{ ok: true }>(`/videos/${id}`).then((r) => r.data),
   recent: (limit = 20) => http.get<Video[]>('/videos/recent', { params: { limit } }).then((r) => r.data),
   continueWatching: (limit = 20) =>

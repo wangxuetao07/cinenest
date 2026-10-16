@@ -15,6 +15,7 @@ const db = require('../db');
 const { httpError } = require('../middleware/error');
 const { requireAdmin } = require('../middleware/auth');
 const store = require('../services/videoStore');
+const rename = require('../services/rename');
 const { removeThumbFile } = require('../services/thumbnail');
 const sprite = require('../services/sprite');
 const preview = require('../services/preview');
@@ -102,6 +103,32 @@ router.patch('/:id', (req, res) => {
   }
 
   res.json({ ok: true });
+});
+
+// 重命名（仅管理员）：改显示名，并同步改磁盘上的文件名
+//
+// 与 PATCH /:id 的 title 区别：PATCH 只改「显示名」，磁盘文件名不动；
+// 本接口按管理员在界面上的输入，把文件名一起改掉（含同名字幕、缩略图缓存键）。
+router.post('/:id/rename', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const body = req.body || {};
+
+  const result = rename.renameVideo(id, {
+    name: body.name,
+    syncTitle: body.syncTitle !== false,
+  });
+
+  const fresh = store.findRaw(uid(req), id);
+  const video = serializeVideo(fresh);
+  video.tags = store.tagsByVideo([id]).get(id) || [];
+
+  res.json({
+    ok: true,
+    changed: result.changed,
+    file_renamed: result.fileRenamed,
+    subtitles: (result.subtitles || []).map((s) => s.to),
+    video,
+  });
 });
 
 // 删除记录（仅管理员，属于全站共享数据）
