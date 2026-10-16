@@ -8,6 +8,7 @@
     "start": "node server/index.js",
     "dev": "node server/index.js",
     "build": "npm --prefix web run build",
+    "deploy:pack": "node build-deploy.cjs",
     "migrate": "node server/db/migrate.js",
     "web:dev": "npm --prefix web run dev"
   },
@@ -15,7 +16,7 @@
     "node": ">=20.10.0"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
+    "better-sqlite3": "^12.8.0",
     "chokidar": "^3.6.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",

@@ -1,5 +1,56 @@
 # CHANGELOG — 影巢 CineNest
 
+## v1.4.6（2026-10-16）仓库整理与打包器健壮性
+
+- **`bin/ffmpeg/` 移出版本库**：`ffmpeg.exe`（161MB）+ `ffprobe.exe`（161MB）此前被提交，`.git` 因此达 **429MB**，且单文件远超 GitHub 的 100MB 上限、push 必然被拒。现已加入 `.gitignore`，并从当前唯一提交中移除（**本地文件保留不动**），`git gc` 后 `.git` 从 429MB 降至 **334KB**。
+- **打包器新增 FFmpeg 自动获取**（`tools/fetch-ffmpeg.cjs`）：打离线包时若 `bin/ffmpeg/` 缺失，自动按镜像顺序下载 → 解压 → 定位 → 落位（`CINENEST_FFMPEG_MIRROR` 可注入内网源）；全部镜像失败时给出明确的手动下载指引并中止（仅影响离线包，标准包照常产出）。
+- **修复打包时的 `EBUSY` 中断**：本机正运行 CineNest 服务时，`node_modules` 内的原生模块被 Windows 锁定，`syncLocalNative()` 复制失败会直接抛错、整个打包中止。现改为先比对 sha1（一致即跳过），被占用时降级为提示——包内启动器本就会按 ABI 自动适配，不影响产物。
+- **`.gitignore` 补全**：新增 `.env.local` / `.env.*.local`、`*.db` / `*.db-wal` / `*.db-shm`、`*.tsbuildinfo`、编辑器与系统文件（`.vscode/`、`.idea/`、`*.swp`、`Thumbs.db`、`desktop.ini` 等）；目录项统一带 `/`；显式 `!.env.example`；`CineNest-*.zip` 一条覆盖标准包 / 离线包 / 热修复包。
+- **新增根目录 `.env.example`**：此前只在部署包内提供，现与包内模板保持一致，便于从源码部署时了解可配项。
+- **验证**：本地镜像桩（含 302 重定向）走通「下载 → 解压 → 定位 → 落位 → 清理」全链路；服务运行状态下完整打包通过（标准包 + 离线包）。
+
+## v1.4.5（2026-10-16）start.cmd 批处理语法修复
+
+**修复部署包双击 `start.cmd` 直接失败**——真机报错 `from was unexpected at this time.`，且连启动横幅都没打印出来（cmd 在解析阶段就中止了整个批处理）。
+
+- **根因（v1.4.4 引入的回归）**：v1.4.4 把「Node 缺失」提示改写成
+  `echo  Please install Node.js 22 LTS (or 24 LTS) from https://nodejs.org/`，
+  而这行位于 `if errorlevel 1 ( ... )` 块内部。cmd 解析括号块时，会把块内 echo 文案里的 `)` 当成块的结束符——`(or 24 LTS)` 的右括号让 if 块提前闭合，紧随其后的 `from https://nodejs.org/` 变成了非法 token，于是报 `from was unexpected at this time.`。v1.4.3 同位置文案没有括号，所以正常。
+- **修复**：`start.cmd` 彻底不再使用 `if ( ... )` 括号块，全部改成 `goto :label` 跳转，文案中也去掉括号。整个批处理只有顺序执行，不再有块解析风险。
+- **新增静态卫兵** `lintStartCmd()`，在打包器 `assemble()` 开头强制执行，不通过直接中断打包。检查项：非 ASCII 字符、LF 换行（`.cmd` 必须 CRLF）、小括号、echo 中的 `& | < >`、`goto` 目标标签是否存在。
+- **验证**：拿用户机上那份真实的失败文件跑卫兵 → 精确指出第 10 行并复现出预测 token `from`；对新模板 → 全部通过。结合真机体检确认该错误与 ABI 问题无关：`better-sqlite3` 12.8.0、五个 ABI 组件齐全、当前二进制已自适配 `node-v137`。
+- 已就地为用户安装目录替换 `start.cmd`（原文件备份为 `start.cmd.v1.4.4.bak`），无需重新下载整包。
+
+## v1.4.4（2026-10-16）部署包原生模块 ABI 自适应
+
+**修复部署包在 Node 20/23/24/25 下必然启动失败**——真机报错 `ERR_DLOPEN_FAILED: NODE_MODULE_VERSION 127 ... requires 137`（用户 Node 24，包内二进制是 Node 22 的）。
+
+- **根因 1（漏判）**：启动器的依赖探测只做了 `require('better-sqlite3')`。better-sqlite3 的原生绑定是**惰性加载**的——首次 `new Database()` 才 `dlopen`，所以「能 require」被误判成「能用」，自愈分支被跳过，崩溃直接抛给用户。现改为真正打开一次内存库（`new D(':memory:')`）来判定。
+- **根因 2（修不了）**：包内只带打包机那一个 ABI 的原生模块。用户 Node 大版本不同时原先只能靠 `npm install` 重装，而预编译包默认从 GitHub 拉取（国内常失败），失败后回退 `node-gyp` 又需要 Visual Studio 编译环境——等于无路可走。
+- **修复**：部署包内置 **Node 20/22/23/24/25 五个大版本**对应的 `better_sqlite3.node`（`vendor/sqlite3/node-v<ABI>-win32-x64/`，每个约 1.9MB）。启动器读取 `process.versions.modules`，不匹配时直接复制对应文件覆盖——**免联网、免编译、瞬时完成**；仍不匹配才回退 `npm install`，并打印含 ABI 编号的明确指引。
+- **依赖升级**：`better-sqlite3` 11.10.0 → 12.8.0。11.x 从未发布 Node 24（ABI 137）的预编译包；12.8.0 是 ABI 覆盖最宽的版本（Node 20/22/23/24/25 全覆盖，`engines: 20.x || 22.x || 23.x || 24.x || 25.x`）。已验证数据库文件完全兼容：旧库（11.10.0 创建）用 12.8.0 读写正常，`integrity_check` 返回 ok。
+- **启动日志**：banner 增加 ABI 编号（`Node.js : v24.15.0 (win32-x64, ABI 137)`）便于排查；自愈成功时打印 `[OK] 已自动适配当前 Node.js（node-v137-win32-x64）`。
+- **验证**：同一份包在 Node 22（ABI 127）与 Node 24（ABI 137）下均通过自检，且可在两者间反复切换；Node 24 下服务正常启动并读取真实媒体库（134 视频 / 6 媒体库 / 134 预览就绪，`integrity_check` ok）。
+- **包内文档**：`DEPLOY-README.md` 与根 `README.md` 同步更新（Node 版本建议 22/24 LTS、ABI 相关常见问题、`vendor/` 目录说明）。
+
+## v1.4.3（2026-10-16）一键部署包
+
+新增「一键部署包」打包能力，把项目变成**解压即用、双击即启动**的分发包。
+
+- **打包器** `build-deploy.cjs`（`npm run deploy:pack`）：
+  - 标准包 `CineNest-Deploy-v1.4.3-win-x64.zip`（约 6MB）——不含 FFmpeg，首次启动自动下载；
+  - 离线包 `CineNest-Deploy-v1.4.3-offline-win-x64.zip`（约 132MB）——内置 FFmpeg 与全部依赖，可完全离线部署。
+  - 包内自带已构建前端 `dist/` 与运行依赖 `node_modules/`，无需在目标机执行 `npm install`。
+- **一键启动器** `launcher.cjs` + `start.cmd`：
+  1. 环境自检（Node 版本、运行依赖、FFmpeg 三查）；
+  2. 依赖自愈——检测 `better-sqlite3` 能否加载，失败则自动 `npm install --omit=dev`（应对换 Node 大版本）；
+  3. FFmpeg 补全——按「包内 `bin/ffmpeg` → 系统 PATH → 自动下载（gyan.dev / BtbN 双镜像，带进度并自动解压）」顺序处理；
+  4. 启动服务并轮询 `/api/health`，就绪后自动打开浏览器；关闭窗口即停止服务。
+  - 参数：`--port <端口>`、`--no-open`、`--check`（仅自检）、`--no-download`；镜像可用环境变量 `CINENEST_FFMPEG_MIRROR` 覆盖（多个用 `|` 分隔，便于内网镜像）。
+- **修复**：镜像重试时把整个 `.cache` 目录删掉，导致后续镜像 `createWriteStream` 直接 `ENOENT`（失败源之后的镜像全部失效）；改为只清理本次半成品，全部失败后再删目录。
+- **包内文件名统一 ASCII**（`start.cmd` / `launcher.cjs` / `DEPLOY-README.md`）：中文文件名在「未置 UTF-8 标志位」时会被资源管理器按 ANSI 代码页解码成乱码，置位后 bsdtar 等工具在非中文代码页下又会转换失败并跳过条目——两种取向都有环境会出问题，故入口与文档一律用英文名，中文内容放在文档正文中。打包器保留 `fixZipUtf8Flags()` 以应对将来出现非 ASCII 名。
+- **包内文档**：`DEPLOY-README.md`（离线速查）+ `README.md`；根目录 `README.md` 新增「零、一键部署包」章节（安装启动步骤、参数、常见问题、不同环境的自动处理）。
+
 ## v1.4.2（2026-10-15）预览采样修复
 
 **修复「预览是同一段 2 秒循环 5 次」的真实缺陷**——用户发现预览片段的 5 段画面一模一样。
