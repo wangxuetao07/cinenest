@@ -18,10 +18,6 @@
 <img width="1919" height="905" alt="image" src="https://github.com/user-attachments/assets/3b1e064f-674e-4442-a325-fb15344d801b" />
 
 
-
-
-
-
 ## 一键部署包（推荐，最快上手）
 
 不想碰命令行？直接使用**一键部署包**：解压 → 双击 → 自动打开浏览器，全程无需 `npm install`、无需手动配置 FFmpeg。
@@ -30,8 +26,8 @@
 
 | 包名 | 体积 | 适用场景 |
 |---|---|---|
-| `CineNest-Deploy-v1.4.9-win-x64.zip` | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
-| `CineNest-Deploy-v1.4.9-offline-win-x64.zip` | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
+| [CineNest-Deploy-v1.4.9-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.9-win-x64.zip) | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
+| [CineNest-Deploy-v1.4.9-offline-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.9-offline-win-x64.zip) | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
 
 两个包都自带已构建好的前端 `dist/`、运行依赖 `node_modules/`，以及适配 Node 20/22/23/24/25 的多版本原生组件 `vendor/`，只需目标机器装好 Node.js。
 
