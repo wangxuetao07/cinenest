@@ -1,9 +1,61 @@
+# ============================================================
+#  影巢 CineNest · Git 忽略规则
+#  注意：.gitignore 不支持行尾注释，# 必须独占一行
+# ============================================================
+
+# ---------- 依赖与构建产物 ----------
 node_modules/
-data/
 dist/
-.env
+*.tsbuildinfo
+
+# ---------- 运行时数据 ----------
+# data/ 内含：数据库、缩略图、海报、精灵图、预览片段、HLS 临时文件、error.log
+# 全部可重新生成或属于本机数据，不入库
+data/
+
+# 兜底：自定义数据目录时也能命中
+*.db
+*.db-wal
+*.db-shm
 *.log
-.DS_Store
-.tmp-media
-.tmp-shots
-.workbuddy
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- 本机配置 ----------
+# .env 含本机路径等个性化配置，不入库；.env.example 是模板，必须入库
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---------- 大型二进制：FFmpeg ----------
+# bin/ffmpeg/ffmpeg.exe + ffprobe.exe 合计约 337MB，且单文件远超 GitHub 的 100MB 上限。
+# 不入库；启动器会在首次启动时自动下载，打包离线包时若缺失也会自动获取。
+bin/ffmpeg/
+
+# ---------- 一键部署包产物 ----------
+# npm run deploy:pack 生成（标准包 / 离线包）/ 热修复包，均可重新打包
+CineNest-*.zip
+
+# ---------- 本地临时目录 ----------
+.tmp-media/
+.tmp-shots/
+.workbuddy/
+
+# ---------- 编辑器与操作系统 ----------
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ============================================================
+#  以下内容**需要**留在版本库中，请勿添加忽略规则：
+#    vendor/sqlite3/     打包必需的五份原生组件（Node 20/22/23/24/25，约 9MB）
+#    build-deploy.cjs    一键部署包打包器
+#    web/                前端源码
+#    *.md                项目文档（README / CHANGELOG / 自测报告 / 开发任务书）
+# ============================================================
