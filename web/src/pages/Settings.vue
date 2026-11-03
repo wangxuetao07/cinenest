@@ -383,7 +383,13 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="flex w-full md:w-auto items-center justify-end gap-2 shrink-0">
-                <n-button size="tiny" :loading="scanningId === lib.id" @click="scanLib(lib)">扫描</n-button>
+                <n-button
+                  size="tiny"
+                  :loading="scanningId === lib.id"
+                  :disabled="!lib.enabled"
+                  :title="lib.enabled ? '' : '已停用，启用后才能扫描'"
+                  @click="scanLib(lib)"
+                >扫描</n-button>
                 <n-button size="tiny" @click="openEdit(lib)">编辑</n-button>
                 <n-button size="tiny" type="error" ghost @click="removeLib(lib)">删除</n-button>
               </div>

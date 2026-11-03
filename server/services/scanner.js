@@ -157,10 +157,14 @@ async function scanLibrary(library) {
   logger.scan('开始扫描媒体库 #' + library.id + ' ' + libRoot);
 
   // 1) 遍历
-  const pattern = path.posix.join(toPosix(libRoot), '**/*');
+  // 【重要】库根路径绝不能拼进 glob pattern：fast-glob 会把路径里的
+  //   [ ] ( ) { } * ? 当成通配符语法 —— 真实故障：目录 F:\视频[1] 被解析成
+  //   「字符类」，一个文件都匹配不到，表现为「这种目录无法扫描」。
+  // 改用 cwd 挂根 + 相对 pattern，库路径只作为字面量参与，不做任何通配解析。
   let entries = [];
   try {
-    entries = await fg(pattern, {
+    entries = await fg('**/*', {
+      cwd: libRoot,
       onlyFiles: true,
       dot: false,
       followSymbolicLinks: false,
@@ -179,12 +183,12 @@ async function scanLibrary(library) {
   const hlsDirs = new Set(
     allVideo
       .filter((f) => PLAYLIST_EXT.includes(path.extname(f).toLowerCase()))
-      .map((f) => toPosix(path.dirname(path.resolve(f))))
+      .map((f) => toPosix(path.dirname(path.resolve(libRoot, f))))
   );
   const files = allVideo.filter((f) => {
     const ext = path.extname(f).toLowerCase();
     if (!config.hlsSegmentExt.includes(ext)) return true;
-    return !hlsDirs.has(toPosix(path.dirname(path.resolve(f))));
+    return !hlsDirs.has(toPosix(path.dirname(path.resolve(libRoot, f))));
   });
 
   state.total = files.length;
@@ -200,8 +204,9 @@ async function scanLibrary(library) {
   // 2) 逐个处理（并发 3）
   const tasks = files.map((raw) =>
     limit(async () => {
-      // fast-glob 返回正斜杠，统一规范化为平台原生路径（Windows 保留反斜杠）
-      const file = path.normalize(path.resolve(raw));
+      // fast-glob（cwd 模式）返回相对库根的正斜杠路径，统一解析回绝对路径，
+      // 再规范化为平台原生形式（Windows 保留反斜杠）
+      const file = path.normalize(path.resolve(libRoot, raw));
       try {
         const stat = fs.statSync(file);
         const size = stat.size;

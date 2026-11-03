@@ -26,8 +26,8 @@
 
 | 包名 | 体积 | 适用场景 |
 |---|---|---|
-| [CineNest-Deploy-v1.4.9-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.9-win-x64.zip) | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
-| [CineNest-Deploy-v1.4.9-offline-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.9-offline-win-x64.zip) | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
+| [CineNest-Deploy-v1.4.10-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.10-win-x64.zip) | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
+| [CineNest-Deploy-v1.4.10-offline-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.10-offline-win-x64.zip) | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
 
 两个包都自带已构建好的前端 `dist/`、运行依赖 `node_modules/`，以及适配 Node 20/22/23/24/25 的多版本原生组件 `vendor/`，只需目标机器装好 Node.js。
 
@@ -441,6 +441,8 @@ taskkill /PID <进程PID> /F
 - 项目所有文件读写默认 UTF-8，HTTP 响应头带 `charset=utf-8`。
 - 若终端显示乱码，多为终端编码问题，浏览器页面显示正常即可。
 - 中文目录、中文文件名已支持；若仍扫不到，请确认目录路径填写的是**绝对路径**且确实存在。
+- 目录名含 `[ ] ( )` 等特殊字符（如 `F:\视频[1]`）也已完整支持；若扫描数为 0，请确认目录里确实有视频文件。
+- 已停用的媒体库不能扫描（按钮禁用；接口返回 400），启用后再扫描即可。
 - 大量中文文件名建议确认磁盘文件系统为 NTFS（FAT32 对长文件名/特殊字符支持较差）。
 
 ### 4. PowerShell 里跑 npm 报「禁止运行脚本」

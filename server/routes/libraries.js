@@ -146,6 +146,8 @@ router.post('/:id/scan', requireAdmin, asyncHandler(async (req, res) => {
   const id = Number(req.params.id);
   const lib = db.prepare('SELECT * FROM library WHERE id = ?').get(id);
   if (!lib) throw httpError(404, '媒体库不存在');
+  // 停用的库不允许手动扫描（与 watcher / scheduler 的 enabled=1 过滤保持一致）
+  if (!lib.enabled) throw httpError(400, '该媒体库已停用，请先启用后再扫描');
 
   const result = await scanLibraryById(id);
   res.json(result);
