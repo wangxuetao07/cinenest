@@ -10,6 +10,13 @@ import RenameVideoModal from '@/components/RenameVideoModal.vue';
 
 const route = useRoute();
 const router = useRouter();
+
+/** 返回上一个页面；直接打开 / 无历史时回首页 */
+function goBack() {
+  const back = window.history.state && window.history.state.back;
+  if (back) router.back();
+  else router.push('/');
+}
 const message = useMessage();
 const store = useAppStore();
 const auth = useAuthStore();
@@ -131,6 +138,17 @@ onMounted(load);
   <div v-if="loading" class="flex justify-center py-24"><n-spin size="large" /></div>
 
   <div v-else-if="video" class="p-3 md:p-6 max-w-[1700px] mx-auto">
+    <!-- 返回上一页（左上角） -->
+    <div class="mb-2 md:mb-3">
+      <button
+        class="h-9 px-3 rounded-lg border border-line text-muted hover:text-white hover:border-white/30 flex items-center gap-1.5 text-[13px] transition-colors bg-black/20"
+        @click="goBack"
+      >
+        <svg viewBox="0 0 24 24" class="w-4 h-4" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" /></svg>
+        返回
+      </button>
+    </div>
+
     <div class="flex gap-4 md:gap-5 flex-col xl:flex-row">
       <!-- 播放区 70% -->
       <div class="xl:w-[70%] min-w-0">

@@ -18,11 +18,12 @@ function uid(req) {
   return Number(id);
 }
 
-// 上报进度（写当前用户自己的进度）
+// 上报进度（写当前用户自己的进度；v1.4.11：未授权媒体库的视频不可上报）
 router.post('/:id', (req, res) => {
   const id = Number(req.params.id);
-  const row = db.prepare('SELECT id FROM video WHERE id = ?').get(id);
+  const row = db.prepare('SELECT id, library_id FROM video WHERE id = ?').get(id);
   if (!row) throw httpError(404, '视频不存在');
+  store.assertVideoVisible(req.user, row);
 
   const progress = Number((req.body || {}).progress);
   const duration = Number((req.body || {}).duration);

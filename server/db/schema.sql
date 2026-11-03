@@ -10,6 +10,18 @@ CREATE TABLE IF NOT EXISTS library (
   created_at  TEXT DEFAULT (datetime('now','localtime'))
 );
 
+-- v1.4.11：媒体库可见用户（v1.4.11 新增表）。
+-- 一行 = 该用户可以查看这个媒体库。**表为空 = 仅管理员可见**（默认）。
+-- 管理员无视本表，始终可见全部媒体库。
+CREATE TABLE IF NOT EXISTS library_access (
+  library_id INTEGER NOT NULL REFERENCES library(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES user(id)    ON DELETE CASCADE,
+  created_at TEXT DEFAULT (datetime('now','localtime')),
+  PRIMARY KEY (library_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_library_access_user ON library_access(user_id);
+
 CREATE TABLE IF NOT EXISTS video (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   library_id    INTEGER NOT NULL REFERENCES library(id) ON DELETE CASCADE,

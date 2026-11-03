@@ -6,11 +6,13 @@ import {
   settingsApi,
   spriteApi,
   previewApi,
+  usersApi,
   formatSize,
   type Library,
   type SpriteBatchState,
   type PreviewBatchState,
   type SystemInfo,
+  type AuthUser,
 } from '@/api';
 import { useAppStore } from '@/stores/app';
 
@@ -27,8 +29,36 @@ const scanningId = ref<number | null>(null);
 
 const showModal = ref(false);
 const editing = ref<Library | null>(null);
-const form = reactive({ name: '', path: '', scanCron: '0 3 * * *', enabled: true });
+const form = reactive({ name: '', path: '', scanCron: '0 3 * * *', enabled: true, userIds: [] as number[] });
 const submitting = ref(false);
+
+// 可见用户（v1.4.11）：可选的「启用中普通用户」，管理员不在列表（始终可见全部）
+const viewers = ref<AuthUser[]>([]);
+const viewerOptions = computed(() =>
+  viewers.value.map((u) => ({ label: u.display_name || u.username, value: u.id }))
+);
+const viewerNameById = computed(() => {
+  const m = new Map<number, string>();
+  for (const u of viewers.value) m.set(u.id, u.display_name || u.username);
+  return m;
+});
+
+async function loadViewers() {
+  try {
+    // usersApi 仅管理员可用（设置页本身就是 admin-only）
+    viewers.value = (await usersApi.list()).filter((u) => u.enabled && u.role !== 'admin');
+  } catch (_) {
+    viewers.value = [];
+  }
+}
+
+/** 库卡片上的可见用户摘要 */
+function viewersText(lib: Library) {
+  const ids = lib.user_ids || [];
+  if (!ids.length) return '仅管理员';
+  const names = ids.map((id) => viewerNameById.value.get(id) || '#' + id);
+  return names.join('、');
+}
 
 async function loadLibs() {
   libsLoading.value = true;
@@ -47,6 +77,7 @@ function openAdd() {
   form.path = '';
   form.scanCron = '0 3 * * *';
   form.enabled = true;
+  form.userIds = [];
   showModal.value = true;
 }
 
@@ -56,6 +87,7 @@ function openEdit(lib: Library) {
   form.path = lib.path;
   form.scanCron = lib.scan_cron || '0 3 * * *';
   form.enabled = !!lib.enabled;
+  form.userIds = [...(lib.user_ids || [])];
   showModal.value = true;
 }
 
@@ -75,6 +107,7 @@ async function submit() {
         name: form.name.trim(),
         scanCron: form.scanCron.trim(),
         enabled: form.enabled,
+        userIds: [...form.userIds],
       });
       message.success('已保存');
     } else {
@@ -82,6 +115,7 @@ async function submit() {
         name: form.name.trim(),
         path: form.path.trim(),
         scanCron: form.scanCron.trim(),
+        userIds: [...form.userIds],
       });
       message.success('媒体库已添加');
     }
@@ -339,7 +373,7 @@ function backupDb() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadLibs(), loadPlayback(), loadSys(), loadBatch(), loadPbatch()]);
+  await Promise.all([loadLibs(), loadPlayback(), loadSys(), loadBatch(), loadPbatch(), loadViewers()]);
   if (batch.value?.running) startBatchPolling();
   if (pbatch.value?.running) startPbatchPolling();
 });
@@ -379,6 +413,9 @@ onBeforeUnmount(() => {
                   视频 {{ lib.video_count ?? 0 }} 个 · 定时扫描
                   <code class="px-1 rounded bg-white/5">{{ lib.scan_cron }}</code>
                   · 创建于 {{ lib.created_at }}
+                </div>
+                <div class="text-[12px] text-muted mt-1">
+                  可见范围：{{ viewersText(lib) }}
                 </div>
               </div>
 
@@ -595,6 +632,22 @@ onBeforeUnmount(() => {
           <div v-if="editing" class="flex items-center justify-between">
             <div class="text-[13px]">启用该媒体库</div>
             <n-switch v-model:value="form.enabled" />
+          </div>
+
+          <div>
+            <div class="text-[13px] text-muted mb-1.5">可见用户（可多选）</div>
+            <n-select
+              v-model:value="form.userIds"
+              multiple
+              clearable
+              size="small"
+              :options="viewerOptions"
+              placeholder="默认仅管理员可见"
+              :max-tag-count="4"
+            />
+            <div class="text-[12px] text-muted mt-1">
+              不选 = 仅管理员可见；普通用户只能看到被勾选的媒体库（含首页、搜索、历史等）。
+            </div>
           </div>
         </div>
 

@@ -18,6 +18,7 @@ const sprite = require('../services/sprite');
 const preview = require('../services/preview');
 const { httpError, asyncHandler } = require('../middleware/error');
 const { requireAdmin } = require('../middleware/auth');
+const store = require('../services/videoStore');
 const { isAbsolutePath } = require('../utils/paths');
 
 const router = express.Router();
@@ -51,14 +52,37 @@ function validatePath(p) {
   return value;
 }
 
-// 列表（登录用户均可读，用于侧边栏）
+// 列表：管理员返回全部（含停用），普通用户只返回「启用中且已授权」的库（用于侧边栏）。
+// v1.4.11 起媒体库可配置可见用户：library_access 为空 = 仅管理员可见。
+// 管理员的响应额外带 user_ids（该库的可见用户），供设置页多选框回显。
 router.get('/', (req, res) => {
-  const rows = db
-    .prepare(`
-      SELECT l.*, (SELECT COUNT(1) FROM video v WHERE v.library_id = l.id) AS video_count
-      FROM library l ORDER BY l.id ASC
-    `)
-    .all();
+  const isAdmin = req.user && req.user.role === 'admin';
+  let rows;
+  if (isAdmin) {
+    rows = db
+      .prepare(`
+        SELECT l.*, (SELECT COUNT(1) FROM video v WHERE v.library_id = l.id) AS video_count
+        FROM library l ORDER BY l.id ASC
+      `)
+      .all();
+    const grants = db.prepare('SELECT library_id, user_id FROM library_access').all();
+    const byLib = new Map();
+    for (const g of grants) {
+      if (!byLib.has(g.library_id)) byLib.set(g.library_id, []);
+      byLib.get(g.library_id).push(g.user_id);
+    }
+    for (const row of rows) row.user_ids = byLib.get(row.id) || [];
+  } else {
+    rows = db
+      .prepare(`
+        SELECT l.*, (SELECT COUNT(1) FROM video v WHERE v.library_id = l.id) AS video_count
+        FROM library l
+        WHERE l.enabled = 1
+          AND EXISTS (SELECT 1 FROM library_access la WHERE la.library_id = l.id AND la.user_id = ?)
+        ORDER BY l.id ASC
+      `)
+      .all(Number(req.user.id));
+  }
   res.json(rows);
 });
 
@@ -79,11 +103,16 @@ router.post('/', requireAdmin, (req, res) => {
     .prepare('INSERT INTO library (name, path, scan_cron, enabled) VALUES (?, ?, ?, 1)')
     .run(name.trim(), validPath, cron);
 
-  const lib = db.prepare('SELECT * FROM library WHERE id = ?').get(info.lastInsertRowid);
+  const id = info.lastInsertRowid;
+  // 可见用户（可选）：默认空 = 仅管理员可见
+  const { userIds } = req.body || {};
+  if (userIds !== undefined) store.setLibraryUsers(id, userIds);
+
+  const lib = db.prepare('SELECT * FROM library WHERE id = ?').get(id);
   watcher.watchLibrary(lib);
   scheduler.scheduleLibrary(lib);
 
-  res.json({ id: info.lastInsertRowid });
+  res.json({ id });
 });
 
 // 修改（仅管理员）
@@ -92,7 +121,7 @@ router.patch('/:id', requireAdmin, (req, res) => {
   const lib = db.prepare('SELECT * FROM library WHERE id = ?').get(id);
   if (!lib) throw httpError(404, '媒体库不存在');
 
-  const { name, scanCron, enabled } = req.body || {};
+  const { name, scanCron, enabled, userIds } = req.body || {};
   const next = {
     name: typeof name === 'string' && name.trim() ? name.trim() : lib.name,
     scan_cron:
@@ -103,6 +132,9 @@ router.patch('/:id', requireAdmin, (req, res) => {
 
   db.prepare('UPDATE library SET name = ?, scan_cron = ?, enabled = ? WHERE id = ?')
     .run(next.name, next.scan_cron, next.enabled, id);
+
+  // 可见用户：传了 userIds 就整体替换（不传保持不变）
+  if (userIds !== undefined) store.setLibraryUsers(id, userIds);
 
   const updated = db.prepare('SELECT * FROM library WHERE id = ?').get(id);
 

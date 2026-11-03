@@ -15,6 +15,7 @@
  */
 
 const db = require('../db');
+const { httpError } = require('../middleware/error');
 const { serializeVideo } = require('../utils/paths');
 
 /** 视频字段 + 当前用户状态字段（状态列放在末尾，覆盖 v.* 里的旧同名列） */
@@ -31,11 +32,34 @@ const VIDEO_COLS = `
 /** 用户状态 join 片段（依赖 @uid） */
 const JOIN_STATE = 'LEFT JOIN user_video_state s ON s.video_id = v.id AND s.user_id = @uid';
 
-/** 启用中的媒体库 + 用户状态 */
+/** 启用中的媒体库 + 用户状态（管理员视角：全部媒体库） */
 const FROM_ACTIVE = 'FROM video v JOIN library l ON l.id = v.library_id AND l.enabled = 1 ' + JOIN_STATE;
 
-/** 不限媒体库状态（详情 / 播放等直链场景使用） */
+/**
+ * 启用中**且已授权**的媒体库 + 用户状态（普通用户视角）。
+ * v1.4.11 起媒体库可配置可见用户：library_access 表为空 = 仅管理员可见，
+ * 普通用户只能看到被明确授权的库。
+ */
+const FROM_ACTIVE_USER =
+  'FROM video v JOIN library l ON l.id = v.library_id AND l.enabled = 1' +
+  ' AND EXISTS (SELECT 1 FROM library_access la WHERE la.library_id = l.id AND la.user_id = @uid)' +
+  ' ' + JOIN_STATE;
+
+/** 不限媒体库状态（管理员的详情 / 播放等直链场景使用） */
 const FROM_ANY = 'FROM video v ' + JOIN_STATE;
+
+/** 该用户是否为启用中的管理员 */
+function isAdminUser(userId) {
+  const row = db
+    .prepare("SELECT 1 FROM user WHERE id = ? AND role = 'admin' AND enabled = 1")
+    .get(Number(userId));
+  return !!row;
+}
+
+/** 按用户身份取列表 FROM 片段：管理员看全部启用库，普通用户只看被授权的启用库 */
+function fromFor(userId) {
+  return isAdminUser(userId) ? FROM_ACTIVE : FROM_ACTIVE_USER;
+}
 
 /** 单次搜索最多拆出的关键词数量（防止超长输入拖慢 SQLite） */
 const MAX_KEYWORDS = 8;
@@ -194,10 +218,10 @@ function listVideos(userId, query = {}) {
   const orderBy = SORT_MAP[String(query.sort || '')] || SORT_MAP['added_at DESC'];
   const bind = Object.assign({ uid: Number(userId) }, params);
 
-  const total = db.prepare('SELECT COUNT(1) AS c ' + FROM_ACTIVE + whereSql).get(bind).c;
+  const total = db.prepare('SELECT COUNT(1) AS c ' + fromFor(userId) + whereSql).get(bind).c;
 
   const rows = db
-    .prepare('SELECT ' + VIDEO_COLS + FROM_ACTIVE + whereSql + ' ORDER BY ' + orderBy + ' LIMIT @limit OFFSET @offset')
+    .prepare('SELECT ' + VIDEO_COLS + fromFor(userId) + whereSql + ' ORDER BY ' + orderBy + ' LIMIT @limit OFFSET @offset')
     .all(Object.assign({}, bind, { limit: size, offset }));
 
   return { total, page, size, items: rows.map(serializeVideo) };
@@ -207,7 +231,7 @@ function listVideos(userId, query = {}) {
 function listRecent(userId, limit = 20) {
   const n = Math.min(200, Math.max(1, Number(limit) || 20));
   const rows = db
-    .prepare('SELECT ' + VIDEO_COLS + FROM_ACTIVE + ' ORDER BY v.added_at DESC, v.id DESC LIMIT @limit')
+    .prepare('SELECT ' + VIDEO_COLS + fromFor(userId) + ' ORDER BY v.added_at DESC, v.id DESC LIMIT @limit')
     .all({ uid: Number(userId), limit: n });
   return rows.map(serializeVideo);
 }
@@ -217,7 +241,7 @@ function listContinue(userId, limit = 20) {
   const n = Math.min(200, Math.max(1, Number(limit) || 20));
   const rows = db
     .prepare(
-      'SELECT ' + VIDEO_COLS + FROM_ACTIVE +
+      'SELECT ' + VIDEO_COLS + fromFor(userId) +
       ' WHERE IFNULL(s.play_progress, 0) > 5' +
       '   AND (IFNULL(s.play_duration, 0) = 0 OR s.play_progress < s.play_duration - 5)' +
       ' ORDER BY s.last_played DESC, v.id DESC LIMIT @limit'
@@ -231,7 +255,7 @@ function listHistory(userId, limit = 50) {
   const n = Math.min(500, Math.max(1, Number(limit) || 50));
   const rows = db
     .prepare(
-      'SELECT ' + VIDEO_COLS + FROM_ACTIVE +
+      'SELECT ' + VIDEO_COLS + fromFor(userId) +
       ' WHERE s.last_played IS NOT NULL' +
       ' ORDER BY s.last_played DESC, v.id DESC LIMIT @limit'
     )
@@ -339,7 +363,7 @@ function search(userId, criteria = {}, limit = 100) {
   orderParts.push('v.added_at DESC', 'v.id DESC');
 
   const rows = db
-    .prepare('SELECT ' + VIDEO_COLS + FROM_ACTIVE + ' WHERE ' + where.join(' AND ') + ' ORDER BY ' + orderParts.join(', ') + ' LIMIT @limit')
+    .prepare('SELECT ' + VIDEO_COLS + fromFor(userId) + ' WHERE ' + where.join(' AND ') + ' ORDER BY ' + orderParts.join(', ') + ' LIMIT @limit')
     .all(params);
 
   return attachTags(rows.map(serializeVideo), keywords, tag);
@@ -347,11 +371,15 @@ function search(userId, criteria = {}, limit = 100) {
 
 /**
  * 单个视频。
- * @param {boolean} [onlyActive] true 时要求所属媒体库处于启用状态
+ *
+ * v1.4.11：普通用户**一律**要求「媒体库启用 + 已授权」——未授权（默认）时详情
+ * 也拿不到，行为等同 404；管理员维持原语义（onlyActive 控制是否要求启用）。
+ *
+ * @param {boolean} [onlyActive] true 时要求所属媒体库处于启用状态（仅对管理员生效）
  * @returns {object|null} 原始行（未序列化）
  */
 function findRaw(userId, id, onlyActive = false) {
-  const from = onlyActive ? FROM_ACTIVE : FROM_ANY;
+  const from = isAdminUser(userId) ? (onlyActive ? FROM_ACTIVE : FROM_ANY) : FROM_ACTIVE_USER;
   return db.prepare('SELECT ' + VIDEO_COLS + ' ' + from + ' WHERE v.id = @id').get({
     uid: Number(userId),
     id: Number(id),
@@ -363,7 +391,7 @@ function find(userId, id, onlyActive = false) {
   return serializeVideo(findRaw(userId, id, onlyActive));
 }
 
-/** 该视频是否对当前用户可见（存在 + 媒体库启用） */
+/** 该视频是否对当前用户可见（存在 + 媒体库启用 + 普通用户需已授权） */
 function existsVisible(userId, id) {
   return !!findRaw(userId, id, true);
 }
@@ -372,6 +400,69 @@ function existsVisible(userId, id) {
 function isLibraryEnabled(libraryId) {
   const row = db.prepare('SELECT enabled FROM library WHERE id = ?').get(Number(libraryId));
   return !!row && !!row.enabled;
+}
+
+/* ------------------------------------------------------------------ *
+ * 媒体库可见用户（v1.4.11）
+ * ------------------------------------------------------------------ */
+
+/** 库的可见用户 id 列表（空数组 = 仅管理员可见） */
+function getLibraryUserIds(libraryId) {
+  return db
+    .prepare('SELECT user_id FROM library_access WHERE library_id = ? ORDER BY user_id ASC')
+    .all(Number(libraryId))
+    .map((r) => r.user_id);
+}
+
+/**
+ * 整体替换某库的可见用户列表（先清后插，事务内完成）。
+ * @param {number[]} userIds 必须是「启用中」的用户 id；管理员 id 会被忽略（管理员始终可见）
+ * @returns {number} 实际写入的授权行数
+ * @throws 用户不存在或已停用时抛 400
+ */
+function setLibraryUsers(libraryId, userIds) {
+  const raw = Array.isArray(userIds) ? userIds.map(Number) : [];
+  const unique = [...new Set(raw.filter((n) => Number.isFinite(n)))];
+
+  for (const id of unique) {
+    const u = db.prepare('SELECT id, enabled, role FROM user WHERE id = ?').get(id);
+    if (!u) throw httpError(400, '用户不存在: #' + id);
+    if (!u.enabled) throw httpError(400, '用户已停用，不能授权: #' + id);
+  }
+  const grantable = unique.filter((id) => {
+    const u = db.prepare('SELECT role FROM user WHERE id = ?').get(id);
+    return u && u.role !== 'admin';
+  });
+
+  const tx = db.transaction(() => {
+    db.prepare('DELETE FROM library_access WHERE library_id = ?').run(Number(libraryId));
+    const ins = db.prepare('INSERT OR IGNORE INTO library_access (library_id, user_id) VALUES (?, ?)');
+    for (const id of grantable) ins.run(Number(libraryId), id);
+    return grantable.length;
+  });
+  return tx();
+}
+
+/** 普通用户是否被授权查看某媒体库（管理员由调用方放行，不看本表） */
+function hasLibraryAccess(userId, libraryId) {
+  return !!db
+    .prepare('SELECT 1 FROM library_access WHERE library_id = ? AND user_id = ?')
+    .get(Number(libraryId), Number(userId));
+}
+
+/**
+ * 校验当前用户能否访问某视频行（需带 library_id 字段）。
+ * 管理员：存在即可；普通用户：媒体库启用 + 已授权，否则一律 404（不泄露存在性）。
+ * @param {{id:number, role:string}|null} user req.user（authGate 保证已登录）
+ * @param {{library_id:number}|null} video 视频原始行
+ */
+function assertVideoVisible(user, video) {
+  if (!video) throw httpError(404, '视频不存在');
+  if (user && user.role === 'admin') return;
+  const uidNum = user && user.id ? Number(user.id) : 0;
+  if (!uidNum || !isLibraryEnabled(video.library_id) || !hasLibraryAccess(uidNum, video.library_id)) {
+    throw httpError(404, '视频不存在');
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -425,6 +516,7 @@ module.exports = {
   VIDEO_COLS,
   JOIN_STATE,
   FROM_ACTIVE,
+  FROM_ACTIVE_USER,
   FROM_ANY,
   SORT_MAP,
   listVideos,
@@ -439,6 +531,11 @@ module.exports = {
   findRaw,
   existsVisible,
   isLibraryEnabled,
+  isAdminUser,
+  getLibraryUserIds,
+  setLibraryUsers,
+  hasLibraryAccess,
+  assertVideoVisible,
   setFavorite,
   saveProgress,
   clearProgress,

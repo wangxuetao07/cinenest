@@ -12,6 +12,8 @@ export interface Library {
   enabled: number;
   created_at: string;
   video_count?: number;
+  /** 可见用户 id 列表（仅管理员响应携带）；空数组 = 仅管理员可见 */
+  user_ids?: number[];
 }
 
 export interface Video {
@@ -275,9 +277,9 @@ export const usersApi = {
 
 export const librariesApi = {
   list: () => http.get<Library[]>('/libraries').then((r) => r.data),
-  create: (payload: { name: string; path: string; scanCron?: string }) =>
+  create: (payload: { name: string; path: string; scanCron?: string; userIds?: number[] }) =>
     http.post<{ id: number }>('/libraries', payload).then((r) => r.data),
-  update: (id: number, payload: { name?: string; scanCron?: string; enabled?: boolean | number }) =>
+  update: (id: number, payload: { name?: string; scanCron?: string; enabled?: boolean | number; userIds?: number[] }) =>
     http.patch<{ ok: true }>(`/libraries/${id}`, payload).then((r) => r.data),
   remove: (id: number) => http.delete<{ ok: true; cleaned?: number }>(`/libraries/${id}`).then((r) => r.data),
   scan: (id: number) => http.post<ScanResult>(`/libraries/${id}/scan`, {}, { timeout: 0 }).then((r) => r.data),

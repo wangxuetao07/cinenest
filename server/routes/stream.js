@@ -16,6 +16,7 @@ const fs = require('fs');
 
 const db = require('../db');
 const { httpError, asyncHandler } = require('../middleware/error');
+const store = require('../services/videoStore');
 const { streamFile } = require('../services/stream');
 const { makeThumb, thumbPathFor } = require('../services/thumbnail');
 const { findSubtitle, toVtt } = require('../services/subtitle');
@@ -26,9 +27,15 @@ const thumb = express.Router();
 const poster = express.Router();
 const subtitle = express.Router();
 
-function getVideo(id) {
-  const row = db.prepare('SELECT * FROM video WHERE id = ?').get(Number(id));
+/**
+ * 取视频行并校验当前用户可见性（v1.4.11）。
+ * 管理员：存在即可；普通用户：媒体库启用 + 已授权（library_access），
+ * 否则一律 404 —— 不泄露未授权内容的存在性。
+ */
+function getVideo(req) {
+  const row = db.prepare('SELECT * FROM video WHERE id = ?').get(Number(req.params.id));
   if (!row) throw httpError(404, '视频不存在');
+  store.assertVideoVisible(req.user, row);
   return row;
 }
 
@@ -40,7 +47,7 @@ const HLS_MIME = 'application/vnd.apple.mpegurl';
 
 // 播放列表：本地 m3u8 重写；其它按需转码
 stream.get('/:id/hls.m3u8', asyncHandler(async (req, res) => {
-  const row = getVideo(req.params.id);
+  const row = getVideo(req);
   if (!fs.existsSync(row.file_path)) throw httpError(404, '源文件不存在');
 
   const body = await hls.getPlaylist(row);
@@ -51,7 +58,7 @@ stream.get('/:id/hls.m3u8', asyncHandler(async (req, res) => {
 
 // 分片 / 子播放列表
 stream.get('/:id/hls/*', asyncHandler(async (req, res) => {
-  const row = getVideo(req.params.id);
+  const row = getVideo(req);
   if (!fs.existsSync(row.file_path)) throw httpError(404, '源文件不存在');
 
   const rel = req.params[0];
@@ -63,7 +70,7 @@ stream.get('/:id/hls/*', asyncHandler(async (req, res) => {
  * ------------------------------------------------------------------ */
 
 stream.get('/:id', asyncHandler(async (req, res) => {
-  const row = getVideo(req.params.id);
+  const row = getVideo(req);
   if (!fs.existsSync(row.file_path)) throw httpError(404, '源文件不存在');
 
   // 本地 HLS：直出重写后的播放列表，这样 hls.js 直接指向 /api/stream/:id 也能播
@@ -78,7 +85,7 @@ stream.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 stream.head('/:id', (req, res) => {
-  const row = getVideo(req.params.id);
+  const row = getVideo(req);
   if (!fs.existsSync(row.file_path)) throw httpError(404, '源文件不存在');
   if (hls.isLocalPlaylist(row.file_path)) {
     res.setHeader('Content-Type', HLS_MIME);
@@ -92,7 +99,7 @@ stream.head('/:id', (req, res) => {
  * ------------------------------------------------------------------ */
 
 thumb.get('/:id', asyncHandler(async (req, res) => {
-  const row = getVideo(req.params.id);
+  const row = getVideo(req);
 
   let file = row.thumb_path && fs.existsSync(row.thumb_path) ? row.thumb_path : null;
 
@@ -119,7 +126,7 @@ thumb.get('/:id', asyncHandler(async (req, res) => {
  * ------------------------------------------------------------------ */
 
 poster.get('/:id', (req, res) => {
-  const row = getVideo(req.params.id);
+  const row = getVideo(req);
 
   if (row.poster_path && fs.existsSync(row.poster_path)) {
     res.setHeader('Cache-Control', 'public, max-age=604800');
@@ -146,7 +153,7 @@ poster.get('/:id', (req, res) => {
  * ------------------------------------------------------------------ */
 
 subtitle.get('/:id', asyncHandler(async (req, res) => {
-  const row = getVideo(req.params.id);
+  const row = getVideo(req);
   const sub = findSubtitle(row.file_path);
   if (!sub) throw httpError(404, '未找到同名字幕');
 

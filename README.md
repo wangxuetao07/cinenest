@@ -26,8 +26,8 @@
 
 | 包名 | 体积 | 适用场景 |
 |---|---|---|
-| [CineNest-Deploy-v1.4.10-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.10-win-x64.zip) | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
-| [CineNest-Deploy-v1.4.10-offline-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.10-offline-win-x64.zip) | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
+| [CineNest-Deploy-v1.4.11-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.11-win-x64.zip) | 约 11 MB | **推荐**。不含 FFmpeg，首次启动自动下载（需联网） |
+| [CineNest-Deploy-v1.4.11-offline-win-x64.zip](https://github.com/wangxuetao07/cinenest/releases/download/v0.1/CineNest-Deploy-v1.4.11-offline-win-x64.zip) | 约 137 MB | 目标机器**不能联网**时使用，内置 FFmpeg 与全部依赖 |
 
 两个包都自带已构建好的前端 `dist/`、运行依赖 `node_modules/`，以及适配 Node 20/22/23/24/25 的多版本原生组件 `vendor/`，只需目标机器装好 Node.js。
 
@@ -298,6 +298,15 @@ CineNest 在手机 / 平板浏览器上开箱即用，桌面端布局不受影�
 
 ---
 
+## 五点十四、媒体库可见用户：决定谁能看到哪个库（v1.4.11 新增，仅管理员）
+
+- **设置 → 媒体库**的新增 / 编辑弹窗里有「**可见用户**」多选框，列出所有启用中的普通用户；**默认为空 = 仅管理员可见**。库卡片上会显示当前可见范围（「仅管理员」或用户名列表）。
+- **对普通用户的生效范围是全链路的**：媒体库列表 / 侧边栏、首页与媒体库页的视频列表、最近添加 / 继续观看、搜索、观看历史、播放列表条目、视频详情，以及播放流 / 缩略图 / 海报 / 字幕等直链接口——未授权一律返回 404，**不会泄露未授权内容的存在**；进度上报和「加入播放列表」同样受限。
+- 管理员始终可见全部媒体库；停用的库依旧全局隐藏（优先级高于可见用户）；被勾选的用户如果后来被停用，授权会随用户删除而失效。
+- 想让某个用户看到新库：编辑该库，在「可见用户」里勾上他，保存即刻生效，无需重启。
+
+---
+
 ## 五点四、m3u8 / HLS 播放（v1.2 新增）
 
 CineNest 对 m3u8 有两条路径，**自动选择，无需配置**：
@@ -332,6 +341,7 @@ CineNest 对 m3u8 有两条路径，**自动选择，无需配置**：
   - 停用后该库的视频**立即从首页、媒体库页、搜索、收藏、历史、播放列表中消失**（服务端过滤）。
   - 管理员侧边栏仍能看到该库（带「停用」徽标），方便回来重新启用；普通用户则完全看不到。
   - 停用不删除任何文件或记录，重新打开「启用」即恢复。
+  - 停用的库不能手动扫描（扫描按钮禁用，接口返回 400），启用后再扫即可。
 - **标题 / 标签由管理员维护**：这两项属于全站共享的元数据，普通用户不可修改（详情页对他们只读展示）。
 
 ---

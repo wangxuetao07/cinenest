@@ -72,18 +72,24 @@ router.delete('/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// 条目列表（带当前用户收藏/进度；跳过停用媒体库里的视频）
+// 条目列表（带当前用户收藏/进度；跳过停用媒体库里的视频；
+// v1.4.11：普通用户再过滤掉未授权媒体库，管理员不受限）
 router.get('/:id/items', (req, res) => {
   const userId = uid(req);
   const id = Number(req.params.id);
   ownPlaylist(userId, id);
+
+  const gate =
+    req.user && req.user.role === 'admin'
+      ? ''
+      : ' AND EXISTS (SELECT 1 FROM library_access la WHERE la.library_id = l.id AND la.user_id = @uid)';
 
   const rows = db
     .prepare(`
       SELECT ${store.VIDEO_COLS}, pi.sort AS __sort, pi.id AS __item_id
       FROM playlist_item pi
       JOIN video v ON v.id = pi.video_id
-      JOIN library l ON l.id = v.library_id AND l.enabled = 1
+      JOIN library l ON l.id = v.library_id AND l.enabled = 1${gate}
       ${store.JOIN_STATE}
       WHERE pi.playlist_id = @pid
       ORDER BY pi.sort ASC, pi.id ASC
@@ -107,8 +113,10 @@ router.post('/:id/items', (req, res) => {
   ownPlaylist(userId, id);
 
   const videoId = Number((req.body || {}).videoId);
-  const video = db.prepare('SELECT id FROM video WHERE id = ?').get(videoId);
+  const video = db.prepare('SELECT id, library_id FROM video WHERE id = ?').get(videoId);
   if (!video) throw httpError(400, 'videoId 无效');
+  // v1.4.11：只能把「自己看得到」的视频加进播放列表
+  store.assertVideoVisible(req.user, video);
 
   const dup = db
     .prepare('SELECT id FROM playlist_item WHERE playlist_id = ? AND video_id = ?')
